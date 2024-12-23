@@ -1,0 +1,19 @@
+﻿# Logs
+*.log
+
+# 환경 설정 파일
+.env
+.DS_Store
+
+# 빌드 디렉토리
+dist/
+build/
+
+# 테스트 파일
+test/
+*.test.js
+
+# 문서
+docs/
+*.md
+

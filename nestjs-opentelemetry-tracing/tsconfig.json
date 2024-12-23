@@ -1,0 +1,15 @@
+﻿{
+  "compilerOptions": {
+    "target": "ES6", // 컴파일된 JavaScript의 버전
+    "module": "commonjs", // 모듈 시스템
+    "outDir": "./dist", // 컴파일된 파일이 저장될 디렉토리
+    "rootDir": "./src", // 소스 파일의 루트 디렉토리
+    "strict": true, // 엄격한 타입 검사 옵션
+    "esModuleInterop": true, // ES 모듈과의 상호 운용성
+    "skipLibCheck": true, // 라이브러리 파일의 타입 검사를 건너뜀
+    "forceConsistentCasingInFileNames": true, // 파일 이름의 대소문자 일관성 강제
+    "declaration": true // .d.ts 파일 생성
+  },
+  "include": ["src"], // 포함할 파일
+  "exclude": ["node_modules", "dist*"] // 제외할 파일
+}

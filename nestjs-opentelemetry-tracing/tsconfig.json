@@ -8,7 +8,9 @@
     "esModuleInterop": true, // ES 모듈과의 상호 운용성
     "skipLibCheck": true, // 라이브러리 파일의 타입 검사를 건너뜀
     "forceConsistentCasingInFileNames": true, // 파일 이름의 대소문자 일관성 강제
-    "declaration": true // .d.ts 파일 생성
+    "declaration": true, // .d.ts 파일 생성
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true
   },
   "include": ["src"], // 포함할 파일
   "exclude": ["node_modules", "dist*"] // 제외할 파일

@@ -87,25 +87,28 @@ export class OtelNestTracingManager implements OnModuleInit {
     }
 
     private createWrappedMethod(className: string, methodName: string, originalMethod: Function): Function {
-        const tracer = trace.getTracer("NestOpenTelemetryTracer");
-        const wrappedMethod = async function (this: any, ...args: any[]) {
-            Logger.log(`Tracing: ${className}.${methodName}`, "OpenTelemetry");
+        const tracer = trace.getTracer('OtelNestTracer');
+        return async function(this: any, ...args: any[]) {
+            // 스팬 생성
             const span = tracer.startSpan(`${className}.${methodName}`);
-            try {
-                return await context.with(trace.setSpan(context.active(), span), async () => {
-                    return await originalMethod.apply(this, args);
-                });
-            } catch (error) {
-                span.setStatus({
-                    code: SpanStatusCode.ERROR,
-                    message: (error as Error).message,
-                });
-                throw error;
-            } finally {
-                span.end();
-            }
+            // 컨텍스트를 스팬에 설정
+            const ctx = trace.setSpan(context.active(), span);
+
+            // context.with()는 async 함수를 넘길 수도 있다.
+            return await context.with(ctx, async () => {
+                try {
+                    const result = await originalMethod.apply(this, args);
+                    span.setStatus({ code: SpanStatusCode.OK });
+                    return result;
+                } catch (err: any) {
+                    span.setStatus({ code: SpanStatusCode.ERROR, message: err.message });
+                    throw err;
+                } finally {
+                    // finally에서 스팬 종료
+                    span.end();
+                }
+            });
         };
-        return wrappedMethod;
     }
 
     private copyMethodMetadata(originalMethod: Function, wrappedMethod: Function): void {

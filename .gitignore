@@ -15,7 +15,6 @@ test/
 
 # 문서
 docs/
-*.md
 
 **/node_modules
 /nestjs-opentelemetry-tracing/node_modules

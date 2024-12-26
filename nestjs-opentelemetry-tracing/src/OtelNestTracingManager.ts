@@ -88,23 +88,24 @@ export class OtelNestTracingManager implements OnModuleInit {
 
     private createWrappedMethod(className: string, methodName: string, originalMethod: Function): Function {
         const tracer = trace.getTracer('OtelNestTracer');
-        return async function(this: any, ...args: any[]) {
-            // 스팬 생성
+        return function(this: any, ...args: any[]) {
             const span = tracer.startSpan(`${className}.${methodName}`);
-            // 컨텍스트를 스팬에 설정
             const ctx = trace.setSpan(context.active(), span);
-
-            // context.with()는 async 함수를 넘길 수도 있다.
-            return await context.with(ctx, async () => {
+            return context.with(ctx, async () => {
                 try {
-                    const result = await originalMethod.apply(this, args);
-                    span.setStatus({ code: SpanStatusCode.OK });
-                    return result;
+                    const result = originalMethod.apply(this, args);
+                    if (result instanceof Promise) {
+                        const asyncResult = await result;
+                        span.setStatus({ code: SpanStatusCode.OK });
+                        return asyncResult;
+                    } else {
+                        span.setStatus({ code: SpanStatusCode.OK });
+                        return result;
+                    }
                 } catch (err: any) {
                     span.setStatus({ code: SpanStatusCode.ERROR, message: err.message });
                     throw err;
                 } finally {
-                    // finally에서 스팬 종료
                     span.end();
                 }
             });

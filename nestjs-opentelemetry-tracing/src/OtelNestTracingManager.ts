@@ -1,10 +1,11 @@
 import 'reflect-metadata';
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { DiscoveryService, MetadataScanner } from '@nestjs/core';
-import { context, trace, Span, SpanStatusCode } from '@opentelemetry/api';
+import { context, trace, SpanStatusCode } from '@opentelemetry/api';
 
 export interface OtelNestTracingManagerOptions {
     dirInclusionPatterns?: RegExp[];
+    dirExcludePatterns?: RegExp[];
     classNameIncludePatterns?: RegExp[];
     classNameExcludePatterns?: RegExp[];
     methodNameIncludePatterns?: RegExp[];
@@ -14,6 +15,7 @@ export interface OtelNestTracingManagerOptions {
 @Injectable()
 export class OtelNestTracingManager implements OnModuleInit {
     private readonly directoryFilters: RegExp[];
+    private readonly excludeDirectoryFilters: RegExp[];
     private readonly includeClassFilters: RegExp[];
     private readonly excludeClassFilters: RegExp[];
     private readonly includeMethodFilters: RegExp[];
@@ -21,20 +23,13 @@ export class OtelNestTracingManager implements OnModuleInit {
     private readonly discoveryService: DiscoveryService;
     private readonly metadataScanner: MetadataScanner;
 
-    constructor(
-        directoryFilters: RegExp[],
-        includeClassFilters: RegExp[],
-        excludeClassFilters: RegExp[],
-        includeMethodFilters: RegExp[],
-        excludeMethodFilters: RegExp[],
-        discoveryService: DiscoveryService,
-        metadataScanner: MetadataScanner,
-    ) {
-        this.directoryFilters = directoryFilters;
-        this.includeClassFilters = includeClassFilters;
-        this.excludeClassFilters = excludeClassFilters;
-        this.includeMethodFilters = includeMethodFilters;
-        this.excludeMethodFilters = excludeMethodFilters;
+    constructor(options: OtelNestTracingManagerOptions, discoveryService: DiscoveryService, metadataScanner: MetadataScanner) {
+        this.directoryFilters = options.dirInclusionPatterns ?? [];
+        this.excludeDirectoryFilters = options.dirExcludePatterns ?? [];
+        this.includeClassFilters = options.classNameIncludePatterns ?? [];
+        this.excludeClassFilters = options.classNameExcludePatterns ?? [];
+        this.includeMethodFilters = options.methodNameIncludePatterns ?? [];
+        this.excludeMethodFilters = options.methodNameExcludePatterns ?? [];
         this.discoveryService = discoveryService;
         this.metadataScanner = metadataScanner;
 
@@ -52,7 +47,7 @@ export class OtelNestTracingManager implements OnModuleInit {
         for (const instanceWrapper of instances) {
             if (!instanceWrapper.instance) continue;
             const className = instanceWrapper.instance.constructor?.name ?? '';
-            const filePath = instanceWrapper.metatype ? Reflect.getMetadata('filePath', instanceWrapper.metatype) : '';
+            const filePath = instanceWrapper.metatype ? Reflect.getMetadata('filePath', instanceWrapper.metatype) : undefined;
 
             if (!this.isTraceableClass(className, filePath)) continue;
 
@@ -86,42 +81,42 @@ export class OtelNestTracingManager implements OnModuleInit {
 
     private createWrappedMethod(className: string, methodName: string, originalMethod: Function): Function {
         const tracer = trace.getTracer('OtelNestTracer');
-
         return function (this: any, ...args: any[]) {
-            return context.with(context.active(), () => {
-                return tracer.startActiveSpan(`${className}.${methodName}`, {}, span => {
+            const span = tracer.startSpan(`${className}.${methodName}`);
+            const spanContext = trace.setSpan(context.active(), span);
+
+            const proceed = () => originalMethod.apply(this, args);
+
+            const result = proceed();
+            const isAsync = result && typeof result.then === 'function';
+
+            if (isAsync) {
+                return context.with(spanContext, async () => {
                     try {
-                        const result = originalMethod.apply(this, args);
-                        if (result instanceof Promise) {
-                            return result
-                                .then((res: any) => {
-                                    span.end();
-                                    return res;
-                                })
-                                .catch((err: any) => {
-                                    span.recordException(err);
-                                    span.setStatus({ code: SpanStatusCode.ERROR, message: err.message });
-                                    span.end();
-                                    throw err;
-                                });
-                        } else {
-                            span.end();
-                            return result;
-                        }
-                    } catch (error) {
-                        if (error instanceof Error) {
-                            span.recordException(error);
-                            span.setStatus({ code: SpanStatusCode.ERROR, message: error.message });
-                            throw error;
-                        } else {
-                            const unknownError = new Error(String(error));
-                            span.recordException(unknownError);
-                            span.setStatus({ code: SpanStatusCode.ERROR, message: unknownError.message });
-                            throw unknownError;
-                        }
+                        const asyncResult = await result;
+                        span.setStatus({ code: SpanStatusCode.OK });
+                        return asyncResult;
+                    } catch (error: any) {
+                        span.recordException(error);
+                        span.setStatus({ code: SpanStatusCode.ERROR, message: error.message });
+                        throw error instanceof Error ? error : new Error(String(error));
+                    } finally {
+                        span.end();
                     }
                 });
-            });
+            } else {
+                try {
+                    const syncResult = result;
+                    span.setStatus({ code: SpanStatusCode.OK });
+                    return syncResult;
+                } catch (error: any) {
+                    span.recordException(error);
+                    span.setStatus({ code: SpanStatusCode.ERROR, message: error.message });
+                    throw error instanceof Error ? error : new Error(String(error));
+                } finally {
+                    span.end();
+                }
+            }
         };
     }
 
@@ -145,15 +140,21 @@ export class OtelNestTracingManager implements OnModuleInit {
         }
     }
 
-    private isTraceableClass(className: string, filePath: string): boolean {
+    private isTraceableClass(className: string, filePath?: string): boolean {
         if (!className.trim()) {
             return false;
         }
         const isClassIncluded = this.includeClassFilters.length === 0 || this.includeClassFilters.some(regex => regex.test(className));
         const isClassExcluded = this.excludeClassFilters.some(regex => regex.test(className));
-        const isDirectoryIncluded = this.directoryFilters.length === 0 || this.directoryFilters.some(regex => regex.test(filePath));
 
-        return isClassIncluded && !isClassExcluded && isDirectoryIncluded;
+        if (!filePath) {
+            return isClassIncluded && !isClassExcluded;
+        }
+
+        const isDirectoryIncluded = this.directoryFilters.length === 0 || this.directoryFilters.some(regex => regex.test(filePath));
+        const isDirectoryExcluded = this.excludeDirectoryFilters.some(regex => regex.test(filePath));
+
+        return isClassIncluded && !isClassExcluded && isDirectoryIncluded && !isDirectoryExcluded;
     }
 
     private isTraceableMethod(methodName: string): boolean {

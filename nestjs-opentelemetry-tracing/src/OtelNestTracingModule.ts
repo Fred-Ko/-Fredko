@@ -4,7 +4,7 @@ import { OtelNestTracingManager, OtelNestTracingManagerOptions } from './OtelNes
 
 @Module({})
 export class OtelNestTracingModule {
-    static forRoot(options: OtelNestTracingManagerOptions): DynamicModule {
+    static forRoot(options?: OtelNestTracingManagerOptions): DynamicModule {
         return {
             module: OtelNestTracingModule,
             imports: [DiscoveryModule],
@@ -14,15 +14,7 @@ export class OtelNestTracingModule {
                 {
                     provide: OtelNestTracingManager,
                     useFactory: (discoveryService: DiscoveryService, metadataScanner: MetadataScanner) =>
-                        new OtelNestTracingManager(
-                            options.dirInclusionPatterns || [],
-                            options.classNameIncludePatterns || [],
-                            options.classNameExcludePatterns || [],
-                            options.methodNameIncludePatterns || [],
-                            options.methodNameExcludePatterns || [],
-                            discoveryService,
-                            metadataScanner
-                        ),
+                        new OtelNestTracingManager(options ?? {}, discoveryService, metadataScanner),
                     inject: [DiscoveryService, MetadataScanner],
                 },
             ],

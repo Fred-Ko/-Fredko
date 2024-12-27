@@ -1,7 +1,7 @@
-import "reflect-metadata";
-import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
-import { DiscoveryService, MetadataScanner } from "@nestjs/core";
-import { context, trace, SpanStatusCode } from "@opentelemetry/api";
+import 'reflect-metadata';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { DiscoveryService, MetadataScanner } from '@nestjs/core';
+import { context, trace, Span, SpanStatusCode } from '@opentelemetry/api';
 
 export interface OtelNestTracingManagerOptions {
     dirInclusionPatterns?: RegExp[];
@@ -28,7 +28,7 @@ export class OtelNestTracingManager implements OnModuleInit {
         includeMethodFilters: RegExp[],
         excludeMethodFilters: RegExp[],
         discoveryService: DiscoveryService,
-        metadataScanner: MetadataScanner
+        metadataScanner: MetadataScanner,
     ) {
         this.directoryFilters = directoryFilters;
         this.includeClassFilters = includeClassFilters;
@@ -51,10 +51,8 @@ export class OtelNestTracingManager implements OnModuleInit {
         const tracedMap: Record<string, string[]> = {};
         for (const instanceWrapper of instances) {
             if (!instanceWrapper.instance) continue;
-            const className = instanceWrapper.instance.constructor?.name ?? "";
-            const filePath = instanceWrapper.metatype
-                ? Reflect.getMetadata("filePath", instanceWrapper.metatype)
-                : "";
+            const className = instanceWrapper.instance.constructor?.name ?? '';
+            const filePath = instanceWrapper.metatype ? Reflect.getMetadata('filePath', instanceWrapper.metatype) : '';
 
             if (!this.isTraceableClass(className, filePath)) continue;
 
@@ -76,7 +74,7 @@ export class OtelNestTracingManager implements OnModuleInit {
 
     private instrumentOneMethod(prototype: any, className: string, methodName: string, tracedMap: Record<string, string[]>): void {
         const descriptor = Object.getOwnPropertyDescriptor(prototype, methodName);
-        if (!descriptor || typeof descriptor.value !== "function") {
+        if (!descriptor || typeof descriptor.value !== 'function') {
             return;
         }
         const originalMethod = descriptor.value;
@@ -88,32 +86,47 @@ export class OtelNestTracingManager implements OnModuleInit {
 
     private createWrappedMethod(className: string, methodName: string, originalMethod: Function): Function {
         const tracer = trace.getTracer('OtelNestTracer');
-        return function(this: any, ...args: any[]) {
-            const span = tracer.startSpan(`${className}.${methodName}`);
-            const ctx = trace.setSpan(context.active(), span);
-            return context.with(ctx, async () => {
-                try {
-                    const result = originalMethod.apply(this, args);
-                    if (result instanceof Promise) {
-                        const asyncResult = await result;
-                        span.setStatus({ code: SpanStatusCode.OK });
-                        return asyncResult;
-                    } else {
-                        span.setStatus({ code: SpanStatusCode.OK });
-                        return result;
+
+        return function (this: any, ...args: any[]) {
+            return context.with(context.active(), () => {
+                return tracer.startActiveSpan(`${className}.${methodName}`, {}, span => {
+                    try {
+                        const result = originalMethod.apply(this, args);
+                        if (result instanceof Promise) {
+                            return result
+                                .then((res: any) => {
+                                    span.end();
+                                    return res;
+                                })
+                                .catch((err: any) => {
+                                    span.recordException(err);
+                                    span.setStatus({ code: SpanStatusCode.ERROR, message: err.message });
+                                    span.end();
+                                    throw err;
+                                });
+                        } else {
+                            span.end();
+                            return result;
+                        }
+                    } catch (error) {
+                        if (error instanceof Error) {
+                            span.recordException(error);
+                            span.setStatus({ code: SpanStatusCode.ERROR, message: error.message });
+                            throw error;
+                        } else {
+                            const unknownError = new Error(String(error));
+                            span.recordException(unknownError);
+                            span.setStatus({ code: SpanStatusCode.ERROR, message: unknownError.message });
+                            throw unknownError;
+                        }
                     }
-                } catch (err: any) {
-                    span.setStatus({ code: SpanStatusCode.ERROR, message: err.message });
-                    throw err;
-                } finally {
-                    span.end();
-                }
+                });
             });
         };
     }
 
     private copyMethodMetadata(originalMethod: Function, wrappedMethod: Function): void {
-        Reflect.getMetadataKeys(originalMethod).forEach((key) => {
+        Reflect.getMetadataKeys(originalMethod).forEach(key => {
             const meta = Reflect.getMetadata(key, originalMethod);
             Reflect.defineMetadata(key, meta, wrappedMethod);
         });
@@ -128,7 +141,7 @@ export class OtelNestTracingManager implements OnModuleInit {
 
     private logTracedMap(tracedMap: Record<string, string[]>): void {
         for (const className in tracedMap) {
-            Logger.log(`Traced: ${className}.{ ${tracedMap[className].join(" | ")} }`, this.constructor.name);
+            Logger.log(`Traced: ${className}.{ ${tracedMap[className].join(' | ')} }`, this.constructor.name);
         }
     }
 
@@ -136,18 +149,16 @@ export class OtelNestTracingManager implements OnModuleInit {
         if (!className.trim()) {
             return false;
         }
-        const isClassIncluded = this.includeClassFilters.length === 0 ||
-            this.includeClassFilters.some((regex) => regex.test(className));
-        const isClassExcluded = this.excludeClassFilters.some((regex) => regex.test(className));
-        const isDirectoryIncluded = this.directoryFilters.length === 0 ||
-            this.directoryFilters.some((regex) => regex.test(filePath));
+        const isClassIncluded = this.includeClassFilters.length === 0 || this.includeClassFilters.some(regex => regex.test(className));
+        const isClassExcluded = this.excludeClassFilters.some(regex => regex.test(className));
+        const isDirectoryIncluded = this.directoryFilters.length === 0 || this.directoryFilters.some(regex => regex.test(filePath));
+
         return isClassIncluded && !isClassExcluded && isDirectoryIncluded;
     }
 
     private isTraceableMethod(methodName: string): boolean {
-        const isMethodIncluded = this.includeMethodFilters.length === 0 ||
-            this.includeMethodFilters.some((regex) => regex.test(methodName));
-        const isMethodExcluded = this.excludeMethodFilters.some((regex) => regex.test(methodName));
+        const isMethodIncluded = this.includeMethodFilters.length === 0 || this.includeMethodFilters.some(regex => regex.test(methodName));
+        const isMethodExcluded = this.excludeMethodFilters.some(regex => regex.test(methodName));
         return isMethodIncluded && !isMethodExcluded;
     }
 }

@@ -19,3 +19,17 @@ docs/
 **/node_modules
 /nestjs-opentelemetry-tracing/node_modules
 /nestjs-opentelemetry-tracing/dist
+
+*.tgz
+*.zip
+*.tar
+*.tar.gz
+*.tar.xz
+*.tar.bz2
+*.tar.lzma
+*.tar.lz
+*.tar.lzo
+*.tar.lz4
+*.tar.zstd
+*.tar.lz4
+*.tar.zstd

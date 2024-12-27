@@ -9,7 +9,7 @@ A NestJS package for tracing services.
 ## Installation
 
 ```bash
-npm install @fredko/nestjs-opentelemetry-tracing @nestjs/common @nestjs/core @nestjs/microservices @opentelemetry/api rxjs
+npm install @fredko/nestjs-opentelemetry-tracing @nestjs/common @nestjs/core @nestjs/microservices @opentelemetry/api
 ```
 
 ## Usage

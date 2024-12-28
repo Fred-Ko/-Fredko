@@ -136,7 +136,7 @@ export class OtelNestTracingManager implements OnModuleInit {
 
     private logTracedMap(tracedMap: Record<string, string[]>): void {
         for (const className in tracedMap) {
-            Logger.log(`Traced: ${className}.{ ${tracedMap[className].join(' | ')} }`, this.constructor.name);
+            Logger.debug(`Traced: ${className}.{ ${tracedMap[className].join(' | ')} }`, this.constructor.name);
         }
     }
 

@@ -1,6 +1,6 @@
 {
     "name": "@fredko/nestjs-opentelemetry-tracing",
-    "version": "0.0.16",
+    "version": "0.1.1",
     "description": "A NestJS package for tracing services.",
     "main": "dist/index.js",
     "types": "dist/index.d.ts",
@@ -32,6 +32,18 @@
         "type": "git",
         "url": "https://github.com/Fred-Ko/-Fredko.git"
     },
-    "dependencies": {
-    }
+    "dependencies": {},
+    "keywords": [
+        "nestjs tracing",
+        "nestjs opentelemetry",
+        "distributed tracing",
+        "nestjs performance monitoring",
+        "nestjs diagnostics",
+        "opentelemetry integration",
+        "nestjs telemetry",
+        "typescript tracing",
+        "nestjs plugin",
+        "service monitoring",
+        "application performance"
+    ]
 }

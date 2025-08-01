@@ -4,6 +4,12 @@
 
 HashiCorp Vault용 Model Context Protocol (MCP) 서버입니다. 이 서버는 AI 에이전트가 Vault와 안전하게 상호작용할 수 있도록 하며, 세밀한 권한 제어 기능을 제공합니다.
 
+## 🚀 빠른 시작
+
+**Cursor AI IDE 사용자라면**: [Cursor 설정 가이드](./cursor-mcp-config.md)를 참조하세요.
+
+**Claude Desktop 사용자라면**: 아래 [사용법](#사용법) 섹션을 참조하세요.
+
 ## 기능
 
 - **Secret 관리**: Vault에서 secret 읽기, 쓰기, 삭제, 목록 조회
@@ -17,7 +23,7 @@ HashiCorp Vault용 Model Context Protocol (MCP) 서버입니다. 이 서버는 A
 ### NPX를 통한 즉시 실행 (권장)
 
 ```bash
-npx @fredko/vault-mcp-server
+npx -y @fredko/vault-mcp-server
 ```
 
 ### NPM을 통한 글로벌 설치
@@ -65,6 +71,57 @@ export VAULT_ALLOWED_PATHS="secret/myapp/,kv/production/"
 
 ## 사용법
 
+### Cursor AI IDE에서 사용
+
+Cursor의 MCP 설정 파일에 다음 설정을 추가하세요:
+
+**설정 파일 위치:**
+
+- macOS: `~/Library/Application Support/Cursor/User/globalStorage/cursor.mcp/config.json`
+- Windows: `%APPDATA%\Cursor\User\globalStorage\cursor.mcp\config.json`
+- Linux: `~/.config/Cursor/User/globalStorage/cursor.mcp/config.json`
+
+**기본 설정 (읽기 전용):**
+
+```json
+{
+  "mcpServers": {
+    "vault": {
+      "command": "npx",
+      "args": ["-y", "@fredko/vault-mcp-server"],
+      "env": {
+        "VAULT_TOKEN": "hvs.your-root-token",
+        "VAULT_ADDR": "http://127.0.0.1:8200",
+        "VAULT_ALLOW_READ": "true",
+        "VAULT_ALLOW_WRITE": "false"
+      }
+    }
+  }
+}
+```
+
+**고급 설정 (경로 제한 포함):**
+
+```json
+{
+  "mcpServers": {
+    "vault": {
+      "command": "npx",
+      "args": ["-y", "@fredko/vault-mcp-server"],
+      "env": {
+        "VAULT_TOKEN": "hvs.your-root-token",
+        "VAULT_ADDR": "http://127.0.0.1:8200",
+        "VAULT_ALLOW_READ": "true",
+        "VAULT_ALLOW_WRITE": "true",
+        "VAULT_ALLOWED_PATHS": "secret/dev/,kv/test/"
+      }
+    }
+  }
+}
+```
+
+> 📝 **상세한 Cursor 설정 가이드**: [cursor-mcp-config.md](./cursor-mcp-config.md) 파일을 참조하세요.
+
 ### Claude Desktop에서 사용
 
 `claude_desktop_config.json` 파일에 다음 설정을 추가하세요:
@@ -74,7 +131,7 @@ export VAULT_ALLOWED_PATHS="secret/myapp/,kv/production/"
   "mcpServers": {
     "vault": {
       "command": "npx",
-      "args": ["-y", "vault-mcp-server"],
+      "args": ["-y", "@fredko/vault-mcp-server"],
       "env": {
         "VAULT_TOKEN": "hvs.your-root-token",
         "VAULT_ADDR": "http://127.0.0.1:8200",

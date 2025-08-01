@@ -1,6 +1,6 @@
 {
   "name": "@fredko/vault-mcp-server",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Model Context Protocol server for HashiCorp Vault integration",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -44,11 +44,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/junhoko/vault-mcp.git"
+    "url": "https://github.com/Fred-Ko/vault-mcp.git"
   },
-  "homepage": "https://github.com/junhoko/vault-mcp#readme",
+  "homepage": "https://github.com/Fred-Ko/vault-mcp#readme",
   "bugs": {
-    "url": "https://github.com/junhoko/vault-mcp/issues"
+    "url": "https://github.com/Fred-Ko/vault-mcp/issues"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.17.1",

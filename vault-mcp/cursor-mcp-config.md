@@ -6,144 +6,20 @@ Cursor의 MCP 설정은 다음 위치에 있습니다:
 
 **macOS:**
 
-```
+```bash
 ~/Library/Application Support/Cursor/User/globalStorage/cursor.mcp/config.json
 ```
 
 **Windows:**
 
-```
+```bash
 %APPDATA%\Cursor\User\globalStorage\cursor.mcp\config.json
 ```
 
 **Linux:**
 
-```
+```bash
 ~/.config/Cursor/User/globalStorage/cursor.mcp/config.json
-```
-
-## 2. 설정 파일 생성/수정
-
-설정 파일이 없다면 새로 생성하고, 있다면 기존 내용에 추가합니다.
-
-### 기본 설정 (읽기 전용)
-
-```json
-{
-  "mcpServers": {
-    "vault": {
-      "command": "node",
-      "args": ["/Users/junhoko/temp/vault-mcp/dist/index.js"],
-      "env": {
-        "VAULT_TOKEN": "hvs.your-root-token-here",
-        "VAULT_ADDR": "http://127.0.0.1:8200",
-        "VAULT_ALLOW_READ": "true",
-        "VAULT_ALLOW_WRITE": "false"
-      }
-    }
-  }
-}
-```
-
-### 읽기/쓰기 권한 모두 허용
-
-```json
-{
-  "mcpServers": {
-    "vault": {
-      "command": "node",
-      "args": ["/Users/junhoko/temp/vault-mcp/dist/index.js"],
-      "env": {
-        "VAULT_TOKEN": "myroot",
-        "VAULT_ADDR": "http://127.0.0.1:8200",
-        "VAULT_ALLOW_READ": "true",
-        "VAULT_ALLOW_WRITE": "true"
-      }
-    }
-  }
-}
-```
-
-### 특정 경로만 허용
-
-```json
-{
-  "mcpServers": {
-    "vault": {
-      "command": "node",
-      "args": ["/Users/junhoko/temp/vault-mcp/dist/index.js"],
-      "env": {
-        "VAULT_TOKEN": "hvs.your-root-token-here",
-        "VAULT_ADDR": "http://127.0.0.1:8200",
-        "VAULT_ALLOW_READ": "true",
-        "VAULT_ALLOW_WRITE": "true",
-        "VAULT_ALLOWED_PATHS": "secret/myapp/,kv/dev/"
-      }
-    }
-  }
-}
-```
-
-## 3. NPX를 사용한 설정 (권장)
-
-npm에 퍼블리시된 패키지를 npx로 실행하는 방법입니다:
-
-### 기본 설정 (읽기 전용)
-
-```json
-{
-  "mcpServers": {
-    "vault": {
-      "command": "npx",
-      "args": ["-y", "@fredko/vault-mcp-server"],
-      "env": {
-        "VAULT_TOKEN": "hvs.your-root-token-here",
-        "VAULT_ADDR": "http://127.0.0.1:8200",
-        "VAULT_ALLOW_READ": "true",
-        "VAULT_ALLOW_WRITE": "false"
-      }
-    }
-  }
-}
-```
-
-### 읽기/쓰기 권한 모두 허용
-
-```json
-{
-  "mcpServers": {
-    "vault": {
-      "command": "npx",
-      "args": ["-y", "@fredko/vault-mcp-server"],
-      "env": {
-        "VAULT_TOKEN": "myroot",
-        "VAULT_ADDR": "http://127.0.0.1:8200",
-        "VAULT_ALLOW_READ": "true",
-        "VAULT_ALLOW_WRITE": "true"
-      }
-    }
-  }
-}
-```
-
-### 특정 경로만 허용
-
-```json
-{
-  "mcpServers": {
-    "vault": {
-      "command": "npx",
-      "args": ["-y", "@fredko/vault-mcp-server"],
-      "env": {
-        "VAULT_TOKEN": "hvs.your-root-token-here",
-        "VAULT_ADDR": "http://127.0.0.1:8200",
-        "VAULT_ALLOW_READ": "true",
-        "VAULT_ALLOW_WRITE": "true",
-        "VAULT_ALLOWED_PATHS": "secret/myapp/,kv/dev/"
-      }
-    }
-  }
-}
 ```
 
 ## 4. 설정 적용
@@ -156,13 +32,13 @@ npm에 퍼블리시된 패키지를 npx로 실행하는 방법입니다:
 
 Cursor에서 다음과 같이 테스트해볼 수 있습니다:
 
-```
+```text
 Vault 서버 상태를 확인해주세요.
 ```
 
 또는
 
-```
+```text
 secret/data/test 경로의 secret을 읽어주세요.
 ```
 

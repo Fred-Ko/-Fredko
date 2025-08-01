@@ -251,6 +251,234 @@ server.registerTool(
   }
 );
 
+// === 가상 트랜잭션 도구들 ===
+
+// 가상 트랜잭션 실행 도구
+server.registerTool(
+  'execute-transaction',
+  {
+    title: 'Execute Virtual Transaction',
+    description: 'Execute a virtual transaction with rollback operations for atomicity. All operations succeed or all are rolled back.',
+    inputSchema: {
+      operations: z.array(z.object({
+        forward: z.object({
+          type: z.enum(['create', 'update', 'delete', 'read']).describe('Type of forward operation: "create" (new secret), "update" (modify existing), "delete" (remove secret), "read" (read secret)'),
+          path: z.string().describe('Path to the secret (e.g., "secret/data/app1/config")'),
+          data: z.record(z.any()).optional().describe('Data for create/update operations (required for create/update). Example: {"username": "admin", "password": "secret123"}')
+        }).describe('Forward operation to execute - the main operation you want to perform'),
+        rollback: z.object({
+          type: z.enum(['create', 'update', 'delete', 'read']).describe('Type of rollback operation: "create" (restore deleted), "update" (restore original data), "delete" (remove created), "read" (no rollback needed)'),
+          path: z.string().describe('Path for rollback operation (usually same as forward path)'),
+          data: z.record(z.any()).optional().describe('Data for rollback create operation (when restoring a deleted secret)'),
+          originalData: z.record(z.any()).optional().describe('Original data to restore for update/delete rollback (backup of existing data before modification)')
+        }).describe('Rollback operation to execute if forward operation fails - this undoes the forward operation')
+      })).describe('Array of transactional operations. Each operation has "forward" (main action) and "rollback" (undo action) parts. Example: [{"forward": {"type": "create", "path": "secret/data/test", "data": {"key": "value"}}, "rollback": {"type": "delete", "path": "secret/data/test"}}]')
+    },
+  },
+  async ({ operations }: { operations: Array<{
+    forward: { type: 'create' | 'update' | 'delete' | 'read'; path: string; data?: Record<string, any> };
+    rollback: { type: 'create' | 'update' | 'delete' | 'read'; path: string; data?: Record<string, any>; originalData?: Record<string, any> };
+  }> }) => {
+    try {
+      const result = await vaultClient.executeTransaction(operations);
+
+      let statusText = result.success ? '✅ COMMITTED' : '❌ ROLLED BACK';
+      let summaryText = `\n📊 Summary:
+- Total operations: ${result.summary.total}
+- Succeeded: ${result.summary.succeeded}
+- Failed: ${result.summary.failed}
+- Rolled back: ${result.summary.rolledBack}
+- Duration: ${result.summary.duration}ms`;
+
+      let detailsText = '\n\n📋 Operation Details:\n';
+      result.results.forEach((res: any, idx: number) => {
+        const icon = res.success ? '✅' : '❌';
+        const rollbackInfo = res.rollbackExecuted !== undefined ?
+          (res.rollbackExecuted ? ' [ROLLED BACK]' : ' [ROLLBACK FAILED]') : '';
+        detailsText += `${idx + 1}. ${icon} ${res.path}${rollbackInfo}\n`;
+        if (res.error) {
+          detailsText += `   Error: ${res.error}\n`;
+        }
+      });
+
+      if (result.rollbackResults && result.rollbackResults.length > 0) {
+        detailsText += '\n🔄 Rollback Operations:\n';
+        result.rollbackResults.forEach((res: any, idx: number) => {
+          const icon = res.rollbackExecuted ? '✅' : '❌';
+          detailsText += `${idx + 1}. ${icon} Rollback ${res.path}\n`;
+        });
+      }
+
+      return {
+        content: [{
+          type: 'text',
+          text: `Virtual Transaction ${result.transactionId}: ${statusText}${summaryText}${detailsText}`,
+        }],
+      };
+    } catch (error: any) {
+      return {
+        content: [{
+          type: 'text',
+          text: `Error executing transaction: ${error.message}`,
+        }],
+        isError: true,
+      };
+    }
+  }
+);
+
+// === 벌크 오퍼레이션 도구들 ===
+
+// 벌크 읽기 도구
+server.registerTool(
+  'bulk-read-secrets',
+  {
+    title: 'Bulk Read Vault Secrets',
+    description: 'Read multiple secrets from Vault in a single operation. Best-effort execution - continues even if some paths fail.',
+    inputSchema: {
+      paths: z.array(z.string()).describe('Array of secret paths to read from (e.g., ["secret/data/app1/config", "secret/data/app2/database"])')
+    },
+  },
+  async ({ paths }: { paths: string[] }) => {
+    try {
+      const result = await vaultClient.bulkReadSecrets(paths);
+
+      const statusText = result.success ? '✅ ALL SUCCESSFUL' : '⚠️ PARTIALLY SUCCESSFUL';
+      const summaryText = `\n📊 Summary:
+- Total paths: ${result.summary.total}
+- Succeeded: ${result.summary.succeeded}
+- Failed: ${result.summary.failed}
+- Duration: ${result.summary.duration}ms`;
+
+      let detailsText = '\n\n📋 Results:\n';
+      result.results.forEach((res: any, idx: number) => {
+        const icon = res.success ? '✅' : '❌';
+        detailsText += `${idx + 1}. ${icon} ${res.path}\n`;
+        if (res.success && res.data) {
+          detailsText += `   Data: ${JSON.stringify(res.data, null, 2)}\n`;
+        } else if (res.error) {
+          detailsText += `   Error: ${res.error}\n`;
+        }
+      });
+
+      return {
+        content: [{
+          type: 'text',
+          text: `Bulk Read Operation: ${statusText}${summaryText}${detailsText}`,
+        }],
+      };
+    } catch (error: any) {
+      return {
+        content: [{
+          type: 'text',
+          text: `Error in bulk read: ${error.message}`,
+        }],
+        isError: true,
+      };
+    }
+  }
+);
+
+// 벌크 쓰기 도구
+server.registerTool(
+  'bulk-write-secrets',
+  {
+    title: 'Bulk Write Vault Secrets',
+    description: 'Write multiple secrets to Vault in a single operation. Best-effort execution - continues even if some operations fail.',
+    inputSchema: {
+      operations: z.array(z.object({
+        path: z.string().describe('Path where to store the secret (e.g., "secret/data/app1/config")'),
+        data: z.record(z.any()).describe('Secret data as key-value pairs (e.g., {"username": "admin", "password": "secret123"})'),
+        type: z.enum(['create', 'update']).optional().describe('Operation type: "create" for new secrets, "update" for existing ones (optional - defaults to create/update)')
+      })).describe('Array of write operations. Each operation must have "path" and "data" fields. Example: [{"path": "secret/data/app1", "data": {"key": "value"}}]')
+    },
+  },
+  async ({ operations }: { operations: Array<{ path: string; data: Record<string, any>; type?: 'create' | 'update' }> }) => {
+    try {
+      const result = await vaultClient.bulkWriteSecrets(operations);
+
+      const statusText = result.success ? '✅ ALL SUCCESSFUL' : '⚠️ PARTIALLY SUCCESSFUL';
+      const summaryText = `\n📊 Summary:
+- Total operations: ${result.summary.total}
+- Succeeded: ${result.summary.succeeded}
+- Failed: ${result.summary.failed}
+- Duration: ${result.summary.duration}ms`;
+
+      let detailsText = '\n\n📋 Results:\n';
+      result.results.forEach((res: any, idx: number) => {
+        const icon = res.success ? '✅' : '❌';
+        detailsText += `${idx + 1}. ${icon} ${res.path}\n`;
+        if (res.error) {
+          detailsText += `   Error: ${res.error}\n`;
+        }
+      });
+
+      return {
+        content: [{
+          type: 'text',
+          text: `Bulk Write Operation: ${statusText}${summaryText}${detailsText}`,
+        }],
+      };
+    } catch (error: any) {
+      return {
+        content: [{
+          type: 'text',
+          text: `Error in bulk write: ${error.message}`,
+        }],
+        isError: true,
+      };
+    }
+  }
+);
+
+// 벌크 삭제 도구
+server.registerTool(
+  'bulk-delete-secrets',
+  {
+    title: 'Bulk Delete Vault Secrets',
+    description: 'Delete multiple secrets from Vault in a single operation. Best-effort execution - continues even if some deletions fail.',
+    inputSchema: {
+      paths: z.array(z.string()).describe('Array of secret paths to delete (e.g., ["secret/data/app1/config", "secret/data/app2/database"])')
+    },
+  },
+  async ({ paths }: { paths: string[] }) => {
+    try {
+      const result = await vaultClient.bulkDeleteSecrets(paths);
+
+      const statusText = result.success ? '✅ ALL SUCCESSFUL' : '⚠️ PARTIALLY SUCCESSFUL';
+      const summaryText = `\n📊 Summary:
+- Total paths: ${result.summary.total}
+- Succeeded: ${result.summary.succeeded}
+- Failed: ${result.summary.failed}
+- Duration: ${result.summary.duration}ms`;
+
+      let detailsText = '\n\n📋 Results:\n';
+      result.results.forEach((res: any, idx: number) => {
+        const icon = res.success ? '✅' : '❌';
+        detailsText += `${idx + 1}. ${icon} ${res.path}\n`;
+        if (res.error) {
+          detailsText += `   Error: ${res.error}\n`;
+        }
+      });
+
+      return {
+        content: [{
+          type: 'text',
+          text: `Bulk Delete Operation: ${statusText}${summaryText}${detailsText}`,
+        }],
+      };
+    } catch (error: any) {
+      return {
+        content: [{
+          type: 'text',
+          text: `Error in bulk delete: ${error.message}`,
+        }],
+        isError: true,
+      };
+    }
+  }
+);
+
 async function main() {
   try {
     // 설정 검증

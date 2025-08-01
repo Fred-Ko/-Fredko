@@ -1,5 +1,8 @@
 import vault from 'node-vault';
 import { VaultConfig } from './config.js';
+import * as yaml from 'js-yaml';
+import * as fs from 'fs';
+import * as path from 'path';
 
 export interface VaultSecret {
   path: string;
@@ -50,6 +53,34 @@ export interface BulkOperationSummary {
     failed: number;
     duration: number;
   };
+}
+
+export interface TreeNode {
+  name: string;
+  path: string;
+  type: 'folder' | 'secret';
+  children?: TreeNode[];
+}
+
+export interface ExploreResult {
+  tree: TreeNode[];
+  totalSecrets: number;
+  totalFolders: number;
+  depth: number;
+}
+
+export interface YamlExportResult {
+  success: boolean;
+  filePath: string;
+  secretsCount: number;
+  error?: string;
+}
+
+export interface YamlImportResult {
+  success: boolean;
+  imported: number;
+  failed: number;
+  errors: Array<{ path: string; error: string }>;
 }
 
 export interface TransactionResult {
@@ -397,6 +428,329 @@ export class VaultClient {
     }
 
     console.error(`[Transaction ${transactionId}] Rollback completed`);
+  }
+
+  // === 새로운 탐색 및 YAML 기능들 ===
+
+  /**
+   * 재귀적으로 경로를 탐색하여 트리 구조로 반환
+   */
+  async exploreSecrets(basePath: string, maxDepth: number = 10): Promise<ExploreResult> {
+    this.checkReadPermission();
+
+    if (!this.isPathAllowed(basePath)) {
+      throw new Error(`Access to path '${basePath}' is not allowed`);
+    }
+
+    console.error(`[Explore] Starting exploration of ${basePath} with max depth ${maxDepth}`);
+
+    const tree: TreeNode[] = [];
+    let totalSecrets = 0;
+    let totalFolders = 0;
+    let currentDepth = 0;
+
+    const exploreRecursive = async (currentPath: string, depth: number): Promise<TreeNode[]> => {
+      if (depth > maxDepth) {
+        console.error(`[Explore] Max depth ${maxDepth} reached at ${currentPath}`);
+        return [];
+      }
+
+      currentDepth = Math.max(currentDepth, depth);
+
+      try {
+        const keys = await this.client.list(currentPath);
+        const children: TreeNode[] = [];
+
+        if (!keys.data?.keys) {
+          return [];
+        }
+
+        for (const key of keys.data.keys) {
+          const fullPath = currentPath.endsWith('/') ? `${currentPath}${key}` : `${currentPath}/${key}`;
+
+          if (key.endsWith('/')) {
+            // 폴더인 경우
+            totalFolders++;
+            const subChildren = await exploreRecursive(fullPath, depth + 1);
+            children.push({
+              name: key.slice(0, -1), // '/' 제거
+              path: fullPath,
+              type: 'folder',
+              children: subChildren
+            });
+          } else {
+            // 시크릿인 경우
+            totalSecrets++;
+            children.push({
+              name: key,
+              path: fullPath,
+              type: 'secret'
+            });
+          }
+        }
+
+        return children;
+      } catch (error: any) {
+        if (error.response?.statusCode === 404) {
+          return [];
+        }
+        console.error(`[Explore] Error exploring ${currentPath}: ${error.message}`);
+        return [];
+      }
+    };
+
+    const rootChildren = await exploreRecursive(basePath, 0);
+    tree.push(...rootChildren);
+
+    console.error(`[Explore] Completed: ${totalSecrets} secrets, ${totalFolders} folders, depth ${currentDepth}`);
+
+    return {
+      tree,
+      totalSecrets,
+      totalFolders,
+      depth: currentDepth
+    };
+  }
+
+  /**
+   * 지정된 경로의 시크릿들을 YAML 파일로 내보내기
+   */
+  async exportSecretsToYaml(basePath: string, outputPath: string, recursive: boolean = true): Promise<YamlExportResult> {
+    this.checkReadPermission();
+
+    if (!this.isPathAllowed(basePath)) {
+      throw new Error(`Access to path '${basePath}' is not allowed`);
+    }
+
+    // 출력 경로가 허용된 워킹 디렉토리 내에 있는지 확인 (보안상 제한)
+    const allowedWorkingDir = this.config.allowedWorkingDirectory || process.cwd();
+    const resolvedOutputPath = path.resolve(outputPath);
+    const resolvedWorkingDir = path.resolve(allowedWorkingDir);
+
+    if (!resolvedOutputPath.startsWith(resolvedWorkingDir)) {
+      throw new Error(`Output path must be within the allowed working directory: ${resolvedWorkingDir}`);
+    }
+
+    console.error(`[Export] Starting YAML export from ${basePath} to ${resolvedOutputPath}`);
+
+    try {
+      const secrets: Record<string, any> = {};
+      let secretsCount = 0;
+
+      // Vault KV v2 경로 변환 함수
+      const convertToDataPath = (metadataPath: string): string => {
+        if (metadataPath.startsWith('secret/metadata/')) {
+          return metadataPath.replace('secret/metadata/', 'secret/data/');
+        }
+        return metadataPath;
+      };
+
+      const collectSecrets = async (currentPath: string, targetObject: Record<string, any>) => {
+        try {
+          const keys = await this.client.list(currentPath);
+
+          if (!keys.data?.keys) {
+            return;
+          }
+
+          for (const key of keys.data.keys) {
+            const fullPath = currentPath.endsWith('/') ? `${currentPath}${key}` : `${currentPath}/${key}`;
+
+            if (key.endsWith('/') && recursive) {
+              // 폴더인 경우 - 재귀적으로 탐색
+              const folderName = key.slice(0, -1);
+              targetObject[folderName] = {};
+              await collectSecrets(fullPath, targetObject[folderName]);
+            } else if (!key.endsWith('/')) {
+              // 시크릿인 경우
+              try {
+                // 메타데이터 경로를 데이터 경로로 변환
+                const dataPath = convertToDataPath(fullPath);
+                console.error(`[Export] Reading secret from data path: ${dataPath}`);
+
+                const secret = await this.client.read(dataPath);
+                const secretData = secret.data?.data || secret.data || {};
+                targetObject[key] = secretData;
+                secretsCount++;
+                console.error(`[Export] Collected secret: ${dataPath}`);
+              } catch (secretError: any) {
+                console.error(`[Export] Failed to read secret ${fullPath}: ${secretError.message}`);
+                targetObject[key] = { error: `Failed to read: ${secretError.message}` };
+              }
+            }
+          }
+        } catch (error: any) {
+          if (error.response?.statusCode !== 404) {
+            console.error(`[Export] Error listing ${currentPath}: ${error.message}`);
+          }
+        }
+      };
+
+      await collectSecrets(basePath, secrets);
+
+      // YAML로 변환하고 파일에 저장
+      const yamlContent = yaml.dump(secrets, {
+        indent: 2,
+        sortKeys: true,
+        lineWidth: -1 // 무제한 너비
+      });
+
+      // 출력 디렉토리 생성
+      const outputDir = path.dirname(resolvedOutputPath);
+      if (!fs.existsSync(outputDir)) {
+        fs.mkdirSync(outputDir, { recursive: true });
+      }
+
+      fs.writeFileSync(resolvedOutputPath, yamlContent, 'utf8');
+
+      console.error(`[Export] Successfully exported ${secretsCount} secrets to ${resolvedOutputPath}`);
+
+      return {
+        success: true,
+        filePath: resolvedOutputPath,
+        secretsCount
+      };
+
+    } catch (error: any) {
+      console.error(`[Export] Export failed: ${error.message}`);
+      return {
+        success: false,
+        filePath: resolvedOutputPath,
+        secretsCount: 0,
+        error: error.message
+      };
+    }
+  }
+
+  /**
+   * YAML 파일에서 시크릿들을 Vault로 가져오기
+   */
+  async importSecretsFromYaml(yamlFilePath: string, basePath: string, overwrite: boolean = false): Promise<YamlImportResult> {
+    this.checkWritePermission();
+
+    if (!this.isPathAllowed(basePath)) {
+      throw new Error(`Access to path '${basePath}' is not allowed`);
+    }
+
+    // 입력 파일이 허용된 워킹 디렉토리 내에 있는지 확인 (보안상 제한)
+    const allowedWorkingDir = this.config.allowedWorkingDirectory || process.cwd();
+    const resolvedYamlPath = path.resolve(yamlFilePath);
+    const resolvedWorkingDir = path.resolve(allowedWorkingDir);
+
+    if (!resolvedYamlPath.startsWith(resolvedWorkingDir)) {
+      throw new Error(`Input file must be within the allowed working directory: ${resolvedWorkingDir}`);
+    }
+
+    console.error(`[Import] Starting YAML import from ${resolvedYamlPath} to ${basePath}`);
+
+    try {
+      if (!fs.existsSync(resolvedYamlPath)) {
+        throw new Error(`YAML file not found: ${resolvedYamlPath}`);
+      }
+
+      const yamlContent = fs.readFileSync(resolvedYamlPath, 'utf8');
+      const data = yaml.load(yamlContent) as Record<string, any>;
+
+      if (!data || typeof data !== 'object') {
+        throw new Error('Invalid YAML content: expected object at root level');
+      }
+
+      let imported = 0;
+      let failed = 0;
+      const errors: Array<{ path: string; error: string }> = [];
+
+      const importRecursive = async (obj: Record<string, any>, currentPath: string) => {
+        for (const [key, value] of Object.entries(obj)) {
+          const secretPath = currentPath.endsWith('/') ? `${currentPath}${key}` : `${currentPath}/${key}`;
+
+          if (!this.isPathAllowed(secretPath)) {
+            errors.push({
+              path: secretPath,
+              error: `Access to path '${secretPath}' is not allowed`
+            });
+            failed++;
+            continue;
+          }
+
+          try {
+            if (value && typeof value === 'object' && !Array.isArray(value)) {
+              // 중첩된 객체인 경우 - 폴더 구조로 처리할지 단일 시크릿으로 처리할지 결정
+              const hasSimpleValues = Object.values(value).some(v =>
+                typeof v !== 'object' || Array.isArray(v) || v === null
+              );
+
+              if (hasSimpleValues) {
+                // 단일 시크릿으로 처리
+                if (!overwrite) {
+                  // 기존 시크릿 확인
+                  try {
+                    await this.client.read(secretPath);
+                    console.error(`[Import] Skipping existing secret: ${secretPath}`);
+                    continue;
+                  } catch (readError: any) {
+                    // 404는 정상 (시크릿이 존재하지 않음)
+                    if (readError.response?.statusCode !== 404) {
+                      throw readError;
+                    }
+                  }
+                }
+
+                await this.client.write(secretPath, { data: value });
+                imported++;
+                console.error(`[Import] Imported secret: ${secretPath}`);
+              } else {
+                // 폴더 구조로 재귀 처리
+                await importRecursive(value, secretPath);
+              }
+            } else {
+              // 단순 값인 경우
+              if (!overwrite) {
+                try {
+                  await this.client.read(secretPath);
+                  console.error(`[Import] Skipping existing secret: ${secretPath}`);
+                  continue;
+                } catch (readError: any) {
+                  if (readError.response?.statusCode !== 404) {
+                    throw readError;
+                  }
+                }
+              }
+
+              await this.client.write(secretPath, { data: { value } });
+              imported++;
+              console.error(`[Import] Imported simple secret: ${secretPath}`);
+            }
+          } catch (error: any) {
+            errors.push({
+              path: secretPath,
+              error: error.message
+            });
+            failed++;
+            console.error(`[Import] Failed to import ${secretPath}: ${error.message}`);
+          }
+        }
+      };
+
+      await importRecursive(data, basePath);
+
+      console.error(`[Import] Completed: ${imported} imported, ${failed} failed`);
+
+      return {
+        success: failed === 0,
+        imported,
+        failed,
+        errors
+      };
+
+    } catch (error: any) {
+      console.error(`[Import] Import failed: ${error.message}`);
+      return {
+        success: false,
+        imported: 0,
+        failed: 1,
+        errors: [{ path: yamlFilePath, error: error.message }]
+      };
+    }
   }
 
   // === 기존 벌크 오퍼레이션 메서드들 ===

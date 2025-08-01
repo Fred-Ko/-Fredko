@@ -8,6 +8,7 @@ export interface VaultConfig {
     write: boolean;
   };
   allowedPaths?: string[];
+  allowedWorkingDirectory?: string;
 }
 
 const ConfigSchema = z.object({
@@ -19,6 +20,7 @@ const ConfigSchema = z.object({
       write: z.boolean().default(false),
     }).default({ read: true, write: false }),
     allowedPaths: z.array(z.string()).optional(),
+    allowedWorkingDirectory: z.string().optional(),
   }),
 });
 
@@ -32,6 +34,7 @@ export function loadConfig(): VaultConfig {
         write: process.env.VAULT_ALLOW_WRITE === 'true',
       },
       allowedPaths: process.env.VAULT_ALLOWED_PATHS?.split(',').map(p => p.trim()),
+      allowedWorkingDirectory: process.env.VAULT_ALLOWED_WORKING_DIR,
     },
   };
 

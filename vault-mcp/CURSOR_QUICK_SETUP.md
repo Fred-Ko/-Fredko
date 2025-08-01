@@ -59,7 +59,8 @@
         "VAULT_ADDR": "http://127.0.0.1:8200",
         "VAULT_ALLOW_READ": "true",
         "VAULT_ALLOW_WRITE": "true",
-        "VAULT_ALLOWED_PATHS": "secret/dev/,kv/test/"
+        "VAULT_ALLOWED_PATHS": "secret/dev/,kv/test/",
+        "VAULT_ALLOWED_WORKING_DIR": "/home/user/vault-backups"
       }
     }
   }

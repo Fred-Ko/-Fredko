@@ -327,6 +327,158 @@ server.registerTool(
   }
 );
 
+// === 새로운 탐색 및 YAML 도구들 ===
+
+// 재귀적 경로 탐색 도구
+server.registerTool(
+  'explore-secrets',
+  {
+    title: 'Explore Vault Secrets Tree',
+    description: 'Recursively explore Vault paths and return a tree structure of secrets and folders',
+    inputSchema: {
+      basePath: z.string().describe('Base path to start exploration from (e.g., "secret/metadata/")'),
+      maxDepth: z.number().default(10).describe('Maximum depth to explore (default: 10, max: 20)'),
+    },
+  },
+  async ({ basePath, maxDepth = 10 }: { basePath: string; maxDepth?: number }) => {
+    try {
+      // 최대 깊이 제한
+      const limitedDepth = Math.min(Math.max(maxDepth, 1), 20);
+
+      const result = await vaultClient.exploreSecrets(basePath, limitedDepth);
+
+      const formatTree = (nodes: any[], indent = 0): string => {
+        let output = '';
+        const prefix = '  '.repeat(indent);
+
+        for (const node of nodes) {
+          const icon = node.type === 'folder' ? '📁' : '🔐';
+          output += `${prefix}${icon} ${node.name}\n`;
+
+          if (node.children && node.children.length > 0) {
+            output += formatTree(node.children, indent + 1);
+          }
+        }
+        return output;
+      };
+
+      const treeText = formatTree(result.tree);
+      const summaryText = `\n📊 Summary:
+- Total secrets: ${result.totalSecrets}
+- Total folders: ${result.totalFolders}
+- Max depth reached: ${result.depth}
+- Base path: ${basePath}`;
+
+      return {
+        content: [{
+          type: 'text',
+          text: `🌳 Vault Secrets Tree:\n\n${treeText}${summaryText}`,
+        }],
+      };
+    } catch (error: any) {
+      return {
+        content: [{
+          type: 'text',
+          text: `Error exploring secrets: ${error.message}`,
+        }],
+        isError: true,
+      };
+    }
+  }
+);
+
+// YAML 내보내기 도구
+server.registerTool(
+  'export-secrets-yaml',
+  {
+    title: 'Export Secrets to YAML',
+    description: 'Export secrets from a Vault path to a YAML file on the local filesystem',
+    inputSchema: {
+      basePath: z.string().describe('Vault path to export from (e.g., "secret/data/app1/")'),
+      outputPath: z.string().describe('Local file path to save YAML (e.g., "./secrets-export.yaml")'),
+      recursive: z.boolean().default(true).describe('Whether to recursively export nested paths (default: true)'),
+    },
+  },
+  async ({ basePath, outputPath, recursive = true }: { basePath: string; outputPath: string; recursive?: boolean }) => {
+    try {
+      const result = await vaultClient.exportSecretsToYaml(basePath, outputPath, recursive);
+
+      if (result.success) {
+        return {
+          content: [{
+            type: 'text',
+            text: `✅ Successfully exported ${result.secretsCount} secrets to ${result.filePath}`,
+          }],
+        };
+      } else {
+        return {
+          content: [{
+            type: 'text',
+            text: `❌ Export failed: ${result.error}`,
+          }],
+          isError: true,
+        };
+      }
+    } catch (error: any) {
+      return {
+        content: [{
+          type: 'text',
+          text: `Error exporting secrets: ${error.message}`,
+        }],
+        isError: true,
+      };
+    }
+  }
+);
+
+// YAML 가져오기 도구
+server.registerTool(
+  'import-secrets-yaml',
+  {
+    title: 'Import Secrets from YAML',
+    description: 'Import secrets from a YAML file to Vault at the specified base path',
+    inputSchema: {
+      yamlFilePath: z.string().describe('Local YAML file path to import from (e.g., "./secrets-import.yaml")'),
+      basePath: z.string().describe('Vault base path to import to (e.g., "secret/data/app1/")'),
+      overwrite: z.boolean().default(false).describe('Whether to overwrite existing secrets (default: false)'),
+    },
+  },
+  async ({ yamlFilePath, basePath, overwrite = false }: { yamlFilePath: string; basePath: string; overwrite?: boolean }) => {
+    try {
+      const result = await vaultClient.importSecretsFromYaml(yamlFilePath, basePath, overwrite);
+
+      const statusText = result.success ? '✅ ALL SUCCESSFUL' : '⚠️ PARTIALLY SUCCESSFUL';
+      const summaryText = `\n📊 Summary:
+- Successfully imported: ${result.imported}
+- Failed imports: ${result.failed}
+- Overwrite mode: ${overwrite ? 'enabled' : 'disabled'}`;
+
+      let detailsText = '';
+      if (result.errors.length > 0) {
+        detailsText += '\n\n❌ Errors:\n';
+        result.errors.forEach((error, idx) => {
+          detailsText += `${idx + 1}. ${error.path}: ${error.error}\n`;
+        });
+      }
+
+      return {
+        content: [{
+          type: 'text',
+          text: `YAML Import: ${statusText}${summaryText}${detailsText}`,
+        }],
+      };
+    } catch (error: any) {
+      return {
+        content: [{
+          type: 'text',
+          text: `Error importing secrets: ${error.message}`,
+        }],
+        isError: true,
+      };
+    }
+  }
+);
+
 // === 벌크 오퍼레이션 도구들 ===
 
 // 벌크 읽기 도구

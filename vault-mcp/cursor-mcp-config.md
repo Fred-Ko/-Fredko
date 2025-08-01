@@ -120,6 +120,26 @@ secret/metadata/ 경로의 모든 secret 목록을 보여주세요.
 secret/data/test 경로에 username은 "testuser", password는 "testpass"로 저장해주세요.
 ```
 
+### 새로운 기능 테스트
+
+#### 탐색 기능 테스트
+
+```text
+secret/metadata/ 경로를 트리 구조로 탐색해주세요.
+```
+
+#### YAML 내보내기 테스트
+
+```text
+secret/data/test/ 경로의 모든 secret을 ./vault-backup.yaml 파일로 내보내주세요.
+```
+
+#### YAML 가져오기 테스트
+
+```text
+./vault-backup.yaml 파일의 내용을 secret/data/restored/ 경로로 가져와주세요.
+```
+
 ## 🔧 환경 변수 설정 옵션
 
 | 변수명 | 설명 | 기본값 | 예시 |
@@ -129,6 +149,7 @@ secret/data/test 경로에 username은 "testuser", password는 "testpass"로 저
 | `VAULT_ALLOW_READ` | 읽기 권한 허용 | `true` | `true`/`false` |
 | `VAULT_ALLOW_WRITE` | 쓰기 권한 허용 | `false` | `true`/`false` |
 | `VAULT_ALLOWED_PATHS` | 접근 허용 경로 | 모든 경로 | `secret/,kv/prod/` |
+| `VAULT_ALLOWED_WORKING_DIR` | 파일 작업 허용 디렉토리 | 현재 작업 디렉토리 | `/home/user/vault-backups` |
 
 ## 🛠️ 문제 해결
 
@@ -201,7 +222,8 @@ secret/data/test 경로에 username은 "testuser", password는 "testpass"로 저
     "VAULT_TOKEN": "hvs.dev-token-here",
     "VAULT_ALLOW_READ": "true",
     "VAULT_ALLOW_WRITE": "false",
-    "VAULT_ALLOWED_PATHS": "secret/dev/,kv/test/"
+    "VAULT_ALLOWED_PATHS": "secret/dev/,kv/test/",
+    "VAULT_ALLOWED_WORKING_DIR": "/home/user/vault-dev-backups"
   }
 }
 ```

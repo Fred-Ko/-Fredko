@@ -41,6 +41,14 @@ HashiCorp Vault용 Model Context Protocol (MCP) 서버입니다. 이 서버는 A
 - **YAML 가져오기**: YAML 파일에서 Secret들을 일괄 복원
 - **보안 제한**: 작업 디렉토리 제한으로 파일 시스템 보안 강화
 
+### 🧪 Dry Run 시뮬레이션
+
+- **안전한 미리보기**: 실제 변경 없이 작업 결과를 시뮬레이션
+- **충돌 감지**: 트랜잭션 내 작업 간 충돌 사전 발견
+- **의존성 분석**: 작업 순서와 의존 관계 검증
+- **검증 오류 표시**: 실행 전 발생할 수 있는 문제점 미리 확인
+- **상세한 피드백**: 각 작업이 성공/실패할 이유를 구체적으로 설명
+
 ## 설치
 
 ### NPX를 통한 즉시 실행 (권장)
@@ -431,6 +439,65 @@ YAML 파일에서 secret들을 Vault로 가져옵니다.
 - 시스템이 롤백을 위해 기존 데이터를 자동으로 백업합니다
 - delete 작업의 경우 원본 데이터가 자동으로 보존되어 복원에 사용됩니다
 
+### 🧪 Dry Run 시뮬레이션 도구
+
+모든 쓰기 작업 도구에는 `dryRun` 매개변수가 추가되어 실제 변경 없이 시뮬레이션할 수 있습니다.
+
+#### write-secret (with dryRun)
+
+```json
+{
+  "path": "secret/data/myapp",
+  "data": {"username": "admin", "password": "newpass"},
+  "dryRun": true
+}
+```
+
+#### delete-secret (with dryRun)
+
+```json
+{
+  "path": "secret/data/myapp",
+  "dryRun": true
+}
+```
+
+#### execute-transaction (with dryRun)
+
+```json
+{
+  "operations": [
+    {
+      "type": "create",
+      "path": "secret/data/test1",
+      "data": {"key": "value"}
+    },
+    {
+      "type": "update", 
+      "path": "secret/data/test1",
+      "data": {"key": "updated"}
+    }
+  ],
+  "dryRun": true
+}
+```
+
+#### 전용 시뮬레이션 도구들
+
+**simulate-write-secret**: 쓰기 작업만 시뮬레이션
+**simulate-delete-secret**: 삭제 작업만 시뮬레이션  
+**simulate-transaction**: 트랜잭션만 시뮬레이션
+**validate-operations**: 여러 작업의 유효성 검증 및 충돌 분석
+
+**Dry Run 결과 정보:**
+
+- 작업 성공/실패 예측
+- 현재 경로 상태 (존재/비존재)
+- 기존 데이터 내용 (있는 경우)
+- 검증 오류 목록
+- 트랜잭션 의존성 분석
+- 작업 간 충돌 감지
+
 ## 리소스 (Resources)
 
 ### vault://health
@@ -658,6 +725,53 @@ AI: 사용자 마이그레이션 트랜잭션을 실행해주세요:
 3. 임시 데이터 정리: secret/data/temp/migration 삭제
 
 실패 시 시스템이 자동으로 모든 변경사항을 원상복구합니다.
+```
+
+### 🧪 Dry Run 시뮬레이션
+
+#### 단일 작업 시뮬레이션
+
+```text
+AI: secret/data/myapp 경로에 {"username": "admin", "password": "newpass"}를 쓰려고 하는데, 실제 변경하지 말고 어떤 일이 일어날지 미리 보여주세요.
+```
+
+시스템이 다음과 같은 정보를 제공합니다:
+
+- 현재 해당 경로에 데이터가 있는지 여부
+- 작업이 성공할지 실패할지 예측
+- 기존 데이터가 있다면 그 내용
+- 발생할 수 있는 검증 오류
+
+#### 트랜잭션 시뮬레이션
+
+```text
+AI: 다음 트랜잭션을 실제로 실행하지 말고 시뮬레이션해주세요:
+
+1. secret/data/app1에 {"version": "2.0"} 생성
+2. secret/data/app1을 {"version": "2.1", "updated": true}로 업데이트
+3. secret/data/old-app 삭제
+
+각 작업이 성공할지, 의존성 문제는 없는지 미리 확인하고 싶습니다.
+```
+
+시스템이 제공하는 정보:
+
+- 각 작업의 성공/실패 예측
+- 작업 간 의존성 분석 (1번 생성 후 2번 업데이트 가능)
+- 전체 트랜잭션 성공 가능성
+- 발견된 충돌이나 문제점
+
+#### 복잡한 시나리오 검증
+
+```text
+AI: 운영 환경 배포 전에 다음 작업들을 검증해주세요:
+
+1. secret/data/prod/database에 새 DB 설정 생성
+2. secret/data/prod/api-keys 업데이트
+3. secret/data/staging/old-config 삭제
+4. secret/data/prod/database를 최신 버전으로 다시 업데이트
+
+실제 실행하지 말고 문제가 없는지만 확인해주세요.
 ```
 
 ## 문제 해결

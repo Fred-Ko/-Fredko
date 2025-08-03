@@ -109,24 +109,44 @@ export function registerBulkTools(
           .describe(
             'Array of write operations. Each operation must have "path" and "data" fields. Example: [{"path": "secret/data/app1", "data": {"key": "value"}}]'
           ),
+        dryRun: z
+          .boolean()
+          .optional()
+          .default(false)
+          .describe(
+            "If true, simulate the operations without making actual changes"
+          ),
       },
     },
-    async ({ operations }: { operations: BulkOperation[] }) => {
+    async ({
+      operations,
+      dryRun,
+    }: {
+      operations: BulkOperation[];
+      dryRun?: boolean;
+    }) => {
+      const modeText = dryRun ? "DRY RUN" : "BULK WRITE";
       log.info(
-        `Starting bulk write for ${operations.length} operations`,
+        `Starting ${modeText.toLowerCase()} for ${
+          operations.length
+        } operations`,
         "BULK_WRITE"
       );
 
       try {
-        const result = await vaultClient.bulkWriteSecrets(operations);
+        const result = await vaultClient.bulkWriteSecrets(operations, dryRun);
 
-        const statusText = result.success
+        const statusText = dryRun
+          ? result.success
+            ? "✅ DRY RUN: ALL WOULD SUCCEED"
+            : "⚠️ DRY RUN: SOME WOULD FAIL"
+          : result.success
           ? "✅ ALL SUCCESSFUL"
           : "⚠️ PARTIALLY SUCCESSFUL";
         const summaryText = `\n📊 Summary:
 - Total operations: ${result.summary.total}
-- Succeeded: ${result.summary.succeeded}
-- Failed: ${result.summary.failed}
+- ${dryRun ? "Would succeed" : "Succeeded"}: ${result.summary.succeeded}
+- ${dryRun ? "Would fail" : "Failed"}: ${result.summary.failed}
 - Duration: ${result.summary.duration}ms`;
 
         let detailsText = "\n\n📋 Results:\n";
@@ -173,21 +193,36 @@ export function registerBulkTools(
           .describe(
             'Array of secret paths to delete (e.g., ["secret/data/app1/config", "secret/data/app2/database"])'
           ),
+        dryRun: z
+          .boolean()
+          .optional()
+          .default(false)
+          .describe(
+            "If true, simulate the operations without making actual changes"
+          ),
       },
     },
-    async ({ paths }: { paths: string[] }) => {
-      log.info(`Starting bulk delete for ${paths.length} paths`, "BULK_DELETE");
+    async ({ paths, dryRun }: { paths: string[]; dryRun?: boolean }) => {
+      const modeText = dryRun ? "DRY RUN" : "BULK DELETE";
+      log.info(
+        `Starting ${modeText.toLowerCase()} for ${paths.length} paths`,
+        "BULK_DELETE"
+      );
 
       try {
-        const result = await vaultClient.bulkDeleteSecrets(paths);
+        const result = await vaultClient.bulkDeleteSecrets(paths, dryRun);
 
-        const statusText = result.success
+        const statusText = dryRun
+          ? result.success
+            ? "✅ DRY RUN: ALL WOULD SUCCEED"
+            : "⚠️ DRY RUN: SOME WOULD FAIL"
+          : result.success
           ? "✅ ALL SUCCESSFUL"
           : "⚠️ PARTIALLY SUCCESSFUL";
         const summaryText = `\n📊 Summary:
 - Total paths: ${result.summary.total}
-- Succeeded: ${result.summary.succeeded}
-- Failed: ${result.summary.failed}
+- ${dryRun ? "Would succeed" : "Succeeded"}: ${result.summary.succeeded}
+- ${dryRun ? "Would fail" : "Failed"}: ${result.summary.failed}
 - Duration: ${result.summary.duration}ms`;
 
         let detailsText = "\n\n📋 Results:\n";

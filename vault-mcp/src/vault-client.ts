@@ -15,6 +15,9 @@ import {
   BulkOperation,
   BulkOperationResult,
   BulkOperationSummary,
+  DryRunOperationResult,
+  DryRunResult,
+  DryRunTransactionResult,
   ExploreResult,
   OperationType,
   RollbackOperation,
@@ -102,11 +105,19 @@ export class VaultClient {
     }
   }
 
-  async writeSecret(path: string, data: Record<string, any>): Promise<void> {
+  async writeSecret(
+    path: string,
+    data: Record<string, any>,
+    dryRun = false
+  ): Promise<void | DryRunResult> {
     this.checkWritePermission();
 
     if (!this.isPathAllowed(path)) {
       throw new VaultPathNotAllowedError(path);
+    }
+
+    if (dryRun) {
+      return this.simulateWriteSecret(path, data);
     }
 
     try {
@@ -120,11 +131,18 @@ export class VaultClient {
     }
   }
 
-  async deleteSecret(path: string): Promise<void> {
+  async deleteSecret(
+    path: string,
+    dryRun = false
+  ): Promise<void | DryRunResult> {
     this.checkWritePermission();
 
     if (!this.isPathAllowed(path)) {
       throw new VaultPathNotAllowedError(path);
+    }
+
+    if (dryRun) {
+      return this.simulateDeleteSecret(path);
     }
 
     try {
@@ -176,6 +194,254 @@ export class VaultClient {
       logError(vaultError, "VAULT_CLIENT");
       throw vaultError;
     }
+  }
+
+  // === Dry Run 시뮬레이션 메서드들 ===
+
+  /**
+   * 쓰기 작업 시뮬레이션
+   */
+  private async simulateWriteSecret(
+    path: string,
+    data: Record<string, any>
+  ): Promise<DryRunResult> {
+    log.debug(
+      `Simulating write operation for: ${path}`,
+      "VAULT_CLIENT_DRY_RUN"
+    );
+
+    const validationErrors: string[] = [];
+    let wouldSucceed = true;
+    let existingData: Record<string, any> | undefined;
+    let pathExists = false;
+
+    try {
+      // 1. 데이터 유효성 검증
+      if (!data || typeof data !== "object") {
+        validationErrors.push("Invalid data: must be a non-null object");
+        wouldSucceed = false;
+      }
+
+      // 2. JSON 직렬화 가능성 검증
+      try {
+        JSON.stringify(data);
+      } catch {
+        validationErrors.push("Data is not JSON serializable");
+        wouldSucceed = false;
+      }
+
+      // 3. 현재 상태 확인 (실제 READ 수행)
+      try {
+        const currentSecret = await this.readSecret(path);
+        if (currentSecret) {
+          pathExists = true;
+          existingData = currentSecret.data;
+        }
+      } catch (error: any) {
+        // 404가 아닌 다른 오류면 실패로 처리
+        if (error.response?.statusCode !== 404) {
+          validationErrors.push(
+            `Failed to check existing data: ${error.message}`
+          );
+          wouldSucceed = false;
+        }
+      }
+
+      return {
+        dryRun: true,
+        wouldSucceed,
+        simulatedData: wouldSucceed ? data : undefined,
+        validationErrors:
+          validationErrors.length > 0 ? validationErrors : undefined,
+        existingData,
+        pathExists,
+      };
+    } catch (error: any) {
+      return {
+        dryRun: true,
+        wouldSucceed: false,
+        validationErrors: [`Simulation failed: ${error.message}`],
+        pathExists,
+      };
+    }
+  }
+
+  /**
+   * 삭제 작업 시뮬레이션
+   */
+  private async simulateDeleteSecret(path: string): Promise<DryRunResult> {
+    log.debug(
+      `Simulating delete operation for: ${path}`,
+      "VAULT_CLIENT_DRY_RUN"
+    );
+
+    const validationErrors: string[] = [];
+    let wouldSucceed = true;
+    let existingData: Record<string, any> | undefined;
+    let pathExists = false;
+
+    try {
+      // 현재 상태 확인 (실제 READ 수행)
+      try {
+        const currentSecret = await this.readSecret(path);
+        if (currentSecret) {
+          pathExists = true;
+          existingData = currentSecret.data;
+        } else {
+          pathExists = false;
+          validationErrors.push("Secret does not exist at the specified path");
+          wouldSucceed = false;
+        }
+      } catch (error: any) {
+        if (error.response?.statusCode === 404) {
+          pathExists = false;
+          validationErrors.push("Secret does not exist at the specified path");
+          wouldSucceed = false;
+        } else {
+          validationErrors.push(
+            `Failed to check existing data: ${error.message}`
+          );
+          wouldSucceed = false;
+        }
+      }
+
+      return {
+        dryRun: true,
+        wouldSucceed,
+        simulatedData: wouldSucceed ? { deleted: true } : undefined,
+        validationErrors:
+          validationErrors.length > 0 ? validationErrors : undefined,
+        existingData,
+        pathExists,
+      };
+    } catch (error: any) {
+      return {
+        dryRun: true,
+        wouldSucceed: false,
+        validationErrors: [`Simulation failed: ${error.message}`],
+        pathExists,
+      };
+    }
+  }
+
+  /**
+   * 단일 작업 시뮬레이션
+   */
+  async simulateOperation(
+    operation: TransactionOperation
+  ): Promise<DryRunOperationResult> {
+    const { type, path, data } = operation;
+
+    // 권한 및 경로 검증 (실제와 동일)
+    try {
+      if (type !== "read") {
+        this.checkWritePermission();
+      } else {
+        this.checkReadPermission();
+      }
+
+      if (!this.isPathAllowed(path)) {
+        throw new VaultPathNotAllowedError(path);
+      }
+    } catch (error: any) {
+      return {
+        path,
+        success: false,
+        dryRun: true,
+        data: {
+          dryRun: true,
+          wouldSucceed: false,
+          validationErrors: [error.message],
+          pathExists: false,
+        },
+        wouldSucceed: false,
+        validationErrors: [error.message],
+      };
+    }
+
+    let simulationResult: DryRunResult;
+
+    switch (type) {
+      case "create":
+      case "update":
+        if (!data) {
+          simulationResult = {
+            dryRun: true,
+            wouldSucceed: false,
+            validationErrors: ["Data is required for create/update operations"],
+            pathExists: false,
+          };
+        } else {
+          simulationResult = await this.simulateWriteSecret(path, data);
+
+          // CREATE의 경우 이미 존재하면 실패
+          if (type === "create" && simulationResult.pathExists) {
+            simulationResult = {
+              ...simulationResult,
+              wouldSucceed: false,
+              validationErrors: [
+                ...(simulationResult.validationErrors || []),
+                "Cannot create: secret already exists at this path",
+              ],
+            };
+          }
+
+          // UPDATE의 경우 존재하지 않으면 실패
+          if (type === "update" && !simulationResult.pathExists) {
+            simulationResult = {
+              ...simulationResult,
+              wouldSucceed: false,
+              validationErrors: [
+                ...(simulationResult.validationErrors || []),
+                "Cannot update: secret does not exist at this path",
+              ],
+            };
+          }
+        }
+        break;
+
+      case "delete":
+        simulationResult = await this.simulateDeleteSecret(path);
+        break;
+
+      case "read":
+        // READ는 실제로 수행 (변경 작업이 아니므로)
+        try {
+          const secret = await this.readSecret(path);
+          simulationResult = {
+            dryRun: true,
+            wouldSucceed: true,
+            simulatedData: secret?.data,
+            pathExists: !!secret,
+            existingData: secret?.data,
+          };
+        } catch (error: any) {
+          simulationResult = {
+            dryRun: true,
+            wouldSucceed: false,
+            validationErrors: [error.message],
+            pathExists: false,
+          };
+        }
+        break;
+
+      default:
+        simulationResult = {
+          dryRun: true,
+          wouldSucceed: false,
+          validationErrors: [`Unsupported operation type: ${type}`],
+          pathExists: false,
+        };
+    }
+
+    return {
+      path,
+      success: simulationResult.wouldSucceed,
+      dryRun: true,
+      data: simulationResult,
+      wouldSucceed: simulationResult.wouldSucceed,
+      validationErrors: simulationResult.validationErrors,
+    };
   }
 
   // === 가상 트랜잭션 메서드들 ===
@@ -276,12 +542,17 @@ export class VaultClient {
    * 가상 트랜잭션 실행 (롤백 자동 계산)
    */
   async executeTransaction(
-    operations: TransactionOperation[]
-  ): Promise<TransactionResult> {
+    operations: TransactionOperation[],
+    dryRun = false
+  ): Promise<TransactionResult | DryRunTransactionResult> {
     log.info(
       `Preparing transaction with ${operations.length} operations`,
       "VAULT_CLIENT"
     );
+
+    if (dryRun) {
+      return this.executeTransactionDryRun(operations);
+    }
 
     try {
       // 롤백 오퍼레이션 자동 계산
@@ -299,6 +570,209 @@ export class VaultClient {
     } catch (error: any) {
       log.error(`Failed to execute transaction`, "VAULT_CLIENT", error);
       throw error;
+    }
+  }
+
+  /**
+   * 트랜잭션 dry run 실행
+   */
+  async executeTransactionDryRun(
+    operations: TransactionOperation[]
+  ): Promise<DryRunTransactionResult> {
+    const transactionId = generateTransactionId();
+    const startTime = Date.now();
+
+    log.info(
+      `Starting transaction dry run ${transactionId} with ${operations.length} operations`,
+      "VAULT_CLIENT_DRY_RUN"
+    );
+
+    const results: DryRunOperationResult[] = [];
+    const validationErrors: Array<{ path: string; errors: string[] }> = [];
+
+    // 순차적으로 각 작업 시뮬레이션 (의존성 고려)
+    const simulatedState = new Map<string, any>(); // 트랜잭션 내 중간 상태 추적
+
+    for (let i = 0; i < operations.length; i++) {
+      const operation = operations[i];
+
+      try {
+        // 이전 작업들의 영향을 고려한 시뮬레이션
+        const simulationResult = await this.simulateOperationWithState(
+          operation,
+          simulatedState,
+          i
+        );
+
+        results.push(simulationResult);
+
+        if (!simulationResult.wouldSucceed) {
+          validationErrors.push({
+            path: operation.path,
+            errors: simulationResult.validationErrors || [
+              "Unknown validation error",
+            ],
+          });
+        } else {
+          // 성공할 것으로 예상되는 작업의 결과를 상태에 반영
+          this.updateSimulatedState(
+            simulatedState,
+            operation,
+            simulationResult
+          );
+        }
+
+        log.debug(
+          `Simulated operation ${i + 1}/${operations.length}: ${
+            operation.type
+          } ${operation.path} - ${
+            simulationResult.wouldSucceed ? "SUCCESS" : "FAILURE"
+          }`,
+          "VAULT_CLIENT_DRY_RUN"
+        );
+      } catch (error: any) {
+        const failureResult: DryRunOperationResult = {
+          path: operation.path,
+          success: false,
+          dryRun: true,
+          data: {
+            dryRun: true,
+            wouldSucceed: false,
+            validationErrors: [`Simulation error: ${error.message}`],
+            pathExists: false,
+          },
+          wouldSucceed: false,
+          validationErrors: [`Simulation error: ${error.message}`],
+        };
+
+        results.push(failureResult);
+        validationErrors.push({
+          path: operation.path,
+          errors: [`Simulation error: ${error.message}`],
+        });
+      }
+    }
+
+    const duration = Date.now() - startTime;
+    const wouldSucceedCount = results.filter((r) => r.wouldSucceed).length;
+    const wouldFailCount = results.length - wouldSucceedCount;
+    const overallSuccess = wouldFailCount === 0;
+
+    log.info(
+      `Transaction dry run ${transactionId} completed: ${wouldSucceedCount}/${results.length} would succeed`,
+      "VAULT_CLIENT_DRY_RUN"
+    );
+
+    return {
+      success: overallSuccess,
+      transactionId,
+      results,
+      dryRun: true,
+      wouldSucceed: overallSuccess,
+      validationSummary: {
+        totalOperations: operations.length,
+        wouldSucceed: wouldSucceedCount,
+        wouldFail: wouldFailCount,
+        validationErrors,
+      },
+      summary: {
+        total: operations.length,
+        succeeded: wouldSucceedCount,
+        failed: wouldFailCount,
+        rolledBack: 0, // dry run에서는 롤백 없음
+        duration,
+      },
+    };
+  }
+
+  /**
+   * 트랜잭션 내 상태를 고려한 작업 시뮬레이션
+   */
+  private async simulateOperationWithState(
+    operation: TransactionOperation,
+    simulatedState: Map<string, any>,
+    operationIndex: number
+  ): Promise<DryRunOperationResult> {
+    const { type, path, data } = operation;
+
+    // 기본 시뮬레이션 수행
+    const baseResult = await this.simulateOperation(operation);
+
+    // 트랜잭션 내 이전 작업들의 영향 고려
+    if (simulatedState.has(path)) {
+      const stateInfo = simulatedState.get(path);
+
+      // 이전 작업에 의해 상태가 변경된 경우 재평가
+      if (type === "create" && stateInfo.operation === "delete") {
+        // 이전에 삭제된 경로에 생성하는 경우 - 성공 가능
+        baseResult.data.pathExists = false;
+        baseResult.data.wouldSucceed = true;
+        baseResult.wouldSucceed = true;
+        baseResult.data.validationErrors = undefined;
+      } else if (type === "create" && stateInfo.operation === "create") {
+        // 이전에 생성된 경로에 다시 생성하는 경우 - 실패
+        baseResult.data.pathExists = true;
+        baseResult.data.wouldSucceed = false;
+        baseResult.wouldSucceed = false;
+        baseResult.data.validationErrors = [
+          "Cannot create: secret would already exist due to previous operation in this transaction",
+        ];
+        baseResult.validationErrors = baseResult.data.validationErrors;
+      } else if (type === "update" && stateInfo.operation === "create") {
+        // 이전에 생성된 경로를 업데이트하는 경우 - 성공 가능
+        baseResult.data.pathExists = true;
+        baseResult.data.wouldSucceed = true;
+        baseResult.wouldSucceed = true;
+        baseResult.data.existingData = stateInfo.data;
+        baseResult.data.validationErrors = undefined;
+      } else if (
+        type === "delete" &&
+        (stateInfo.operation === "create" || stateInfo.operation === "update")
+      ) {
+        // 이전에 생성되거나 업데이트된 경로를 삭제하는 경우 - 성공 가능
+        baseResult.data.pathExists = true;
+        baseResult.data.wouldSucceed = true;
+        baseResult.wouldSucceed = true;
+        baseResult.data.existingData = stateInfo.data;
+        baseResult.data.validationErrors = undefined;
+      } else if (type === "delete" && stateInfo.operation === "delete") {
+        // 이전에 삭제된 경로를 다시 삭제하는 경우 - 실패
+        baseResult.data.pathExists = false;
+        baseResult.data.wouldSucceed = false;
+        baseResult.wouldSucceed = false;
+        baseResult.data.validationErrors = [
+          "Cannot delete: secret would not exist due to previous operation in this transaction",
+        ];
+        baseResult.validationErrors = baseResult.data.validationErrors;
+      } else if (type === "update" && stateInfo.operation === "delete") {
+        // 이전에 삭제된 경로를 업데이트하는 경우 - 실패
+        baseResult.data.pathExists = false;
+        baseResult.data.wouldSucceed = false;
+        baseResult.wouldSucceed = false;
+        baseResult.data.validationErrors = [
+          "Cannot update: secret would not exist due to previous operation in this transaction",
+        ];
+        baseResult.validationErrors = baseResult.data.validationErrors;
+      }
+    }
+
+    return baseResult;
+  }
+
+  /**
+   * 시뮬레이션 상태 업데이트
+   */
+  private updateSimulatedState(
+    simulatedState: Map<string, any>,
+    operation: TransactionOperation,
+    result: DryRunOperationResult
+  ): void {
+    if (result.wouldSucceed) {
+      simulatedState.set(operation.path, {
+        operation: operation.type,
+        data: operation.data,
+        operationIndex: simulatedState.size,
+      });
     }
   }
 
@@ -993,14 +1467,16 @@ export class VaultClient {
    * 벌크 쓰기 (Best-Effort)
    */
   async bulkWriteSecrets(
-    operations: BulkOperation[]
+    operations: BulkOperation[],
+    dryRun = false
   ): Promise<BulkOperationSummary> {
     this.checkWritePermission();
     const startTime = Date.now();
     const results: BulkOperationResult[] = [];
     let succeeded = 0;
 
-    console.error(`Starting bulk write for ${operations.length} operations`);
+    const modeText = dryRun ? "dry run" : "bulk write";
+    console.error(`Starting ${modeText} for ${operations.length} operations`);
 
     for (const operation of operations) {
       if (!this.isPathAllowed(operation.path)) {
@@ -1008,23 +1484,44 @@ export class VaultClient {
           path: operation.path,
           success: false,
           error: `Access to path '${operation.path}' is not allowed`,
+          dryRun,
         });
         continue;
       }
 
       try {
-        await this.client.write(operation.path, { data: operation.data });
-        results.push({
-          path: operation.path,
-          success: true,
-          data: { written: true },
-        });
-        succeeded++;
+        if (dryRun) {
+          // Dry run 모드: 실제 쓰기 대신 시뮬레이션
+          const dryRunResult = await this.simulateWriteSecret(
+            operation.path,
+            operation.data || {}
+          );
+          results.push({
+            path: operation.path,
+            success: dryRunResult.wouldSucceed,
+            error: dryRunResult.wouldSucceed
+              ? undefined
+              : dryRunResult.validationErrors?.join(", "),
+            data: dryRunResult,
+            dryRun: true,
+          });
+          if (dryRunResult.wouldSucceed) succeeded++;
+        } else {
+          // 실제 실행
+          await this.client.write(operation.path, { data: operation.data });
+          results.push({
+            path: operation.path,
+            success: true,
+            data: { written: true },
+          });
+          succeeded++;
+        }
       } catch (error: any) {
         results.push({
           path: operation.path,
           success: false,
           error: error.message,
+          dryRun,
         });
       }
     }
@@ -1049,13 +1546,17 @@ export class VaultClient {
   /**
    * 벌크 삭제 (Best-Effort)
    */
-  async bulkDeleteSecrets(paths: string[]): Promise<BulkOperationSummary> {
+  async bulkDeleteSecrets(
+    paths: string[],
+    dryRun = false
+  ): Promise<BulkOperationSummary> {
     this.checkWritePermission();
     const startTime = Date.now();
     const results: BulkOperationResult[] = [];
     let succeeded = 0;
 
-    console.error(`Starting bulk delete for ${paths.length} paths`);
+    const modeText = dryRun ? "dry run" : "bulk delete";
+    console.error(`Starting ${modeText} for ${paths.length} paths`);
 
     for (const path of paths) {
       if (!this.isPathAllowed(path)) {
@@ -1063,23 +1564,41 @@ export class VaultClient {
           path,
           success: false,
           error: `Access to path '${path}' is not allowed`,
+          dryRun,
         });
         continue;
       }
 
       try {
-        await this.client.delete(path);
-        results.push({
-          path,
-          success: true,
-          data: { deleted: true },
-        });
-        succeeded++;
+        if (dryRun) {
+          // Dry run 모드: 실제 삭제 대신 시뮬레이션
+          const dryRunResult = await this.simulateDeleteSecret(path);
+          results.push({
+            path,
+            success: dryRunResult.wouldSucceed,
+            error: dryRunResult.wouldSucceed
+              ? undefined
+              : dryRunResult.validationErrors?.join(", "),
+            data: dryRunResult,
+            dryRun: true,
+          });
+          if (dryRunResult.wouldSucceed) succeeded++;
+        } else {
+          // 실제 실행
+          await this.client.delete(path);
+          results.push({
+            path,
+            success: true,
+            data: { deleted: true },
+          });
+          succeeded++;
+        }
       } catch (error: any) {
         results.push({
           path,
           success: false,
           error: error.message,
+          dryRun,
         });
       }
     }

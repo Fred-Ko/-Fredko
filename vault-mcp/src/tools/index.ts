@@ -8,6 +8,7 @@ import { log } from "../logger.js";
 import { VaultClient } from "../vault-client.js";
 import { registerBasicTools } from "./basic-tools.js";
 import { registerBulkTools } from "./bulk-tools.js";
+import { registerDryRunTools } from "./dry-run-tools.js";
 import { registerExplorationTools } from "./exploration-tools.js";
 import { registerTransactionTools } from "./transaction-tools.js";
 
@@ -36,6 +37,10 @@ export function registerAllTools(
     // 벌크 작업 도구들
     registerBulkTools(server, vaultClient);
     log.debug("Bulk operation tools registered", "TOOLS");
+
+    // Dry Run 시뮬레이션 도구들
+    registerDryRunTools(server, vaultClient);
+    log.debug("Dry run simulation tools registered", "TOOLS");
 
     log.info("All MCP tools registered successfully", "TOOLS");
   } catch (error) {

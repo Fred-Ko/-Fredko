@@ -37,6 +37,7 @@ export interface BulkOperationResult {
   error?: string;
   data?: any;
   rollbackExecuted?: boolean;
+  dryRun?: boolean; // dry run 모드에서 실행된 경우
 }
 
 export interface BulkOperationSummary {
@@ -83,6 +84,7 @@ export interface TransactionResult {
   transactionId: string;
   results: BulkOperationResult[];
   rollbackResults?: BulkOperationResult[];
+  dryRun?: boolean; // dry run 모드 여부
   summary: {
     total: number;
     succeeded: number;
@@ -126,4 +128,35 @@ export interface VaultConfig {
   };
   allowedPaths?: string[];
   allowedWorkingDirectory?: string;
+}
+
+// Dry Run 관련 타입 정의들
+export interface DryRunResult {
+  dryRun: true;
+  wouldSucceed: boolean;
+  simulatedData?: any;
+  validationErrors?: string[];
+  existingData?: Record<string, any>; // 현재 존재하는 데이터 (update/delete 시)
+  pathExists?: boolean; // 경로 존재 여부
+}
+
+export interface DryRunOperationResult
+  extends Omit<BulkOperationResult, "data"> {
+  dryRun: true;
+  data: DryRunResult;
+  wouldSucceed: boolean;
+  validationErrors?: string[];
+}
+
+export interface DryRunTransactionResult
+  extends Omit<TransactionResult, "results"> {
+  dryRun: true;
+  results: DryRunOperationResult[];
+  wouldSucceed: boolean;
+  validationSummary: {
+    totalOperations: number;
+    wouldSucceed: number;
+    wouldFail: number;
+    validationErrors: Array<{ path: string; errors: string[] }>;
+  };
 }

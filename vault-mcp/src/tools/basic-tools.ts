@@ -69,31 +69,99 @@ export function registerBasicTools(
     "write-secret",
     {
       title: "Write Vault Secret",
-      description: "Write a secret to Vault at the specified path",
+      description:
+        "Write a secret to Vault at the specified path. Use dryRun to simulate the operation without making actual changes.",
       inputSchema: {
         path: z
           .string()
           .describe("The path where to store the secret in Vault"),
         data: z.record(z.any()).describe("The secret data as key-value pairs"),
+        dryRun: z
+          .boolean()
+          .optional()
+          .default(false)
+          .describe(
+            "If true, simulate the operation without making actual changes"
+          ),
       },
     },
-    async ({ path, data }: { path: string; data: Record<string, any> }) => {
-      log.debug(`Writing secret to path: ${path}`, "WRITE_SECRET");
+    async ({
+      path,
+      data,
+      dryRun = false,
+    }: {
+      path: string;
+      data: Record<string, any>;
+      dryRun?: boolean;
+    }) => {
+      log.debug(
+        `${dryRun ? "Simulating write" : "Writing"} secret to path: ${path}`,
+        "WRITE_SECRET"
+      );
 
       try {
-        await vaultClient.writeSecret(path, data);
+        const result = await vaultClient.writeSecret(path, data, dryRun);
 
-        log.debug(`Successfully wrote secret to: ${path}`, "WRITE_SECRET");
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Successfully wrote secret to ${path}`,
-            },
-          ],
-        };
+        if (dryRun && result) {
+          // Dry run 결과 처리
+          const dryRunResult = result as any;
+          const statusIcon = dryRunResult.wouldSucceed ? "✅" : "❌";
+          const statusText = dryRunResult.wouldSucceed
+            ? "WOULD SUCCEED"
+            : "WOULD FAIL";
+
+          let responseText = `${statusIcon} DRY RUN: Write operation ${statusText}\n\nPath: ${path}\n`;
+
+          if (dryRunResult.pathExists) {
+            responseText += `\n📄 Current data exists at path:\n${JSON.stringify(
+              dryRunResult.existingData,
+              null,
+              2
+            )}\n`;
+          } else {
+            responseText += `\n📄 Path does not currently exist - would create new secret\n`;
+          }
+
+          if (dryRunResult.wouldSucceed) {
+            responseText += `\n📝 Would write data:\n${JSON.stringify(
+              data,
+              null,
+              2
+            )}`;
+          }
+
+          if (dryRunResult.validationErrors) {
+            responseText += `\n\n❌ Validation errors:\n${dryRunResult.validationErrors
+              .map((e: string) => `• ${e}`)
+              .join("\n")}`;
+          }
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: responseText,
+              },
+            ],
+          };
+        } else {
+          // 실제 쓰기 완료
+          log.debug(`Successfully wrote secret to: ${path}`, "WRITE_SECRET");
+          return {
+            content: [
+              {
+                type: "text",
+                text: `✅ Successfully wrote secret to ${path}`,
+              },
+            ],
+          };
+        }
       } catch (error: any) {
-        log.error(`Failed to write secret to: ${path}`, "WRITE_SECRET", error);
+        log.error(
+          `Failed to ${dryRun ? "simulate" : "write"} secret to: ${path}`,
+          "WRITE_SECRET",
+          error
+        );
         return errorToMCPResponse(error);
       }
     }
@@ -104,29 +172,82 @@ export function registerBasicTools(
     "delete-secret",
     {
       title: "Delete Vault Secret",
-      description: "Delete a secret from Vault at the specified path",
+      description:
+        "Delete a secret from Vault at the specified path. Use dryRun to simulate the operation without making actual changes.",
       inputSchema: {
         path: z.string().describe("The path to the secret to delete in Vault"),
+        dryRun: z
+          .boolean()
+          .optional()
+          .default(false)
+          .describe(
+            "If true, simulate the operation without making actual changes"
+          ),
       },
     },
-    async ({ path }: { path: string }) => {
-      log.debug(`Deleting secret from path: ${path}`, "DELETE_SECRET");
+    async ({ path, dryRun = false }: { path: string; dryRun?: boolean }) => {
+      log.debug(
+        `${
+          dryRun ? "Simulating delete" : "Deleting"
+        } secret from path: ${path}`,
+        "DELETE_SECRET"
+      );
 
       try {
-        await vaultClient.deleteSecret(path);
+        const result = await vaultClient.deleteSecret(path, dryRun);
 
-        log.debug(`Successfully deleted secret from: ${path}`, "DELETE_SECRET");
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Successfully deleted secret at ${path}`,
-            },
-          ],
-        };
+        if (dryRun && result) {
+          // Dry run 결과 처리
+          const dryRunResult = result as any;
+          const statusIcon = dryRunResult.wouldSucceed ? "✅" : "❌";
+          const statusText = dryRunResult.wouldSucceed
+            ? "WOULD SUCCEED"
+            : "WOULD FAIL";
+
+          let responseText = `${statusIcon} DRY RUN: Delete operation ${statusText}\n\nPath: ${path}\n`;
+
+          if (dryRunResult.pathExists && dryRunResult.existingData) {
+            responseText += `\n📄 Current data that would be deleted:\n${JSON.stringify(
+              dryRunResult.existingData,
+              null,
+              2
+            )}`;
+          } else {
+            responseText += `\n📄 No data exists at this path`;
+          }
+
+          if (dryRunResult.validationErrors) {
+            responseText += `\n\n❌ Validation errors:\n${dryRunResult.validationErrors
+              .map((e: string) => `• ${e}`)
+              .join("\n")}`;
+          }
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: responseText,
+              },
+            ],
+          };
+        } else {
+          // 실제 삭제 완료
+          log.debug(
+            `Successfully deleted secret from: ${path}`,
+            "DELETE_SECRET"
+          );
+          return {
+            content: [
+              {
+                type: "text",
+                text: `✅ Successfully deleted secret at ${path}`,
+              },
+            ],
+          };
+        }
       } catch (error: any) {
         log.error(
-          `Failed to delete secret from: ${path}`,
+          `Failed to ${dryRun ? "simulate" : "delete"} secret from: ${path}`,
           "DELETE_SECRET",
           error
         );

@@ -52,7 +52,7 @@ async function main(): Promise<void> {
     log.info("Creating MCP server", "MAIN");
     const server = new McpServer({
       name: "vault-mcp-server",
-      version: "1.0.0",
+      version: "1.0.10",
     });
 
     // 리소스 등록

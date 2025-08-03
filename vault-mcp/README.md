@@ -343,84 +343,93 @@ YAML 파일에서 secret들을 Vault로 가져옵니다.
 
 #### execute-transaction
 
-롤백 오퍼레이션과 함께 가상 트랜잭션을 실행합니다. 모든 작업이 성공하거나 전체가 롤백되는 원자성을 보장합니다.
+**자동 롤백 계산**을 통해 가상 트랜잭션을 실행합니다. 사용자는 수행하고자 하는 작업만 지정하면, 시스템이 자동으로 롤백 방법을 계산합니다. 모든 작업이 성공하거나 전체가 롤백되는 원자성을 보장합니다.
 
 **매개변수:**
 
 - `operations` (array): 트랜잭션 작업 배열 (필수)
-  - `forward` (object): 실행할 메인 작업
-    - `type` (string): 작업 타입 (`'create'`, `'update'`, `'delete'`, `'read'`)
-    - `path` (string): Secret 경로 (예: `"secret/data/app1/config"`)
-    - `data` (object, optional): 데이터 (create/update 시 필수)
-  - `rollback` (object): 롤백 작업 (forward 실패 시 실행)
-    - `type` (string): 롤백 작업 타입
-    - `path` (string): 롤백 경로 (보통 forward와 동일)
-    - `data` (object, optional): 롤백 생성 데이터 (삭제된 secret 복원 시)
-    - `originalData` (object, optional): 원본 데이터 (수정/삭제 전 백업)
+  - `type` (string): 작업 타입 (`'create'`, `'update'`, `'delete'`, `'read'`)
+  - `path` (string): Secret 경로 (예: `"secret/data/app1/config"`)
+  - `data` (object, optional): 데이터 (create/update 시 필수)
 
-##### 예제 1: Secret 생성 트랜잭션
+##### 예제 1: Secret 생성 트랜잭션 (자동 롤백)
 
 ```json
 {
   "operations": [
     {
-      "forward": {
-        "type": "create",
-        "path": "secret/data/app1/config",
-        "data": {
-          "database_url": "postgres://localhost:5432/mydb",
-          "api_key": "sk-1234567890"
-        }
-      },
-      "rollback": {
-        "type": "delete",
-        "path": "secret/data/app1/config"
+      "type": "create",
+      "path": "secret/data/app1/config",
+      "data": {
+        "database_url": "postgres://localhost:5432/mydb",
+        "api_key": "sk-1234567890"
       }
     }
   ]
 }
 ```
 
-##### 예제 2: Secret 수정 트랜잭션
+시스템이 자동으로 롤백 계산: 생성 실패 시 해당 경로를 삭제
+
+##### 예제 2: Secret 수정 트랜잭션 (자동 롤백)
 
 ```json
 {
   "operations": [
     {
-      "forward": {
-        "type": "update",
-        "path": "secret/data/app1/config",
-        "data": {
-          "database_url": "postgres://newhost:5432/mydb",
-          "api_key": "sk-new-key-here"
-        }
-      },
-      "rollback": {
-        "type": "update",
-        "path": "secret/data/app1/config",
-        "originalData": {
-          "database_url": "postgres://localhost:5432/mydb",
-          "api_key": "sk-1234567890"
-        }
+      "type": "update",
+      "path": "secret/data/app1/config",
+      "data": {
+        "database_url": "postgres://newhost:5432/mydb",
+        "api_key": "sk-new-key-here"
       }
     }
   ]
 }
 ```
+
+시스템이 자동으로 롤백 계산: 수정 실패 시 원본 데이터로 복원
+
+##### 예제 3: 복합 트랜잭션 (자동 롤백)
+
+```json
+{
+  "operations": [
+    {
+      "type": "create",
+      "path": "secret/data/user1",
+      "data": {"name": "john", "role": "admin"}
+    },
+    {
+      "type": "update",
+      "path": "secret/data/config",
+      "data": {"version": "2.0", "updated": "2024-01-01"}
+    },
+    {
+      "type": "delete",
+      "path": "secret/data/old-data"
+    }
+  ]
+}
+```
+
+시스템이 각 작업에 대해 자동으로 적절한 롤백 방법을 계산
 
 **반환값:** 트랜잭션 결과, 롤백 상태, 상세 실행 로그
 
 **특징:**
 
-- 모든 작업이 성공하거나 모두 롤백 (원자성)
-- 실패 시 자동으로 완료된 작업들을 역순으로 롤백
-- 롤백 실패도 추적하여 상세한 상태 정보 제공
+- **자동 롤백 계산**: 사용자가 롤백 로직을 정의할 필요 없음
+- **원자성 보장**: 모든 작업이 성공하거나 모두 롤백
+- **지능형 롤백**: 각 작업 타입에 맞는 적절한 롤백 방법을 자동 선택
+- **실패 시 자동 복구**: 완료된 작업들을 역순으로 자동 롤백
+- **상세한 추적**: 실행 과정과 롤백 상태를 상세히 기록
 
 **주의사항:**
 
-- `forward.data`는 create/update 시 필수입니다
-- `rollback.originalData`는 update/delete 롤백 시 필수입니다
-- rollback 작업은 forward 작업의 반대 동작을 수행해야 합니다
+- `data`는 create/update 작업 시 필수입니다
+- 시스템이 롤백을 위해 기존 데이터를 자동으로 백업합니다
+- delete 작업의 경우 원본 데이터가 자동으로 보존되어 복원에 사용됩니다
 
 ## 리소스 (Resources)
 
@@ -477,9 +486,9 @@ Vault 서버의 현재 상태 정보를 제공합니다.
 
 **원인:**
 
-- `forward`와 `rollback` 객체 구조 오류
-- 필수 필드 누락
-- rollback 로직 불일치
+- 필수 필드 누락 (`type`, `path`)
+- 잘못된 작업 타입
+- create/update 시 `data` 필드 누락
 
 **해결방법:**
 
@@ -488,8 +497,7 @@ Vault 서버의 현재 상태 정보를 제공합니다.
 {
   "operations": [
     {
-      "type": "create",  // forward 객체로 감싸지 않음
-      "path": "secret/data/test"
+      "path": "secret/data/test"  // type 필드 누락
     }
   ]
 }
@@ -498,15 +506,9 @@ Vault 서버의 현재 상태 정보를 제공합니다.
 {
   "operations": [
     {
-      "forward": {
-        "type": "create",
-        "path": "secret/data/test",
-        "data": {"key": "value"}
-      },
-      "rollback": {
-        "type": "delete",
-        "path": "secret/data/test"
-      }
+      "type": "create",
+      "path": "secret/data/test",
+      "data": {"key": "value"}
     }
   ]
 }
@@ -634,34 +636,28 @@ AI: 다음 경로들의 secret을 모두 삭제해주세요:
 
 ### 가상 트랜잭션
 
-#### 기본 트랜잭션
+#### 기본 트랜잭션 (자동 롤백)
 
 ```text
-AI: 다음 작업들을 트랜잭션으로 실행해주세요. 하나라도 실패하면 모두 롤백해주세요:
+AI: 다음 작업들을 트랜잭션으로 실행해주세요. 하나라도 실패하면 모두 자동으로 롤백해주세요:
 
 1. secret/data/user1에 {"name": "john", "role": "admin"} 생성
-   - 롤백: secret/data/user1 삭제
-
 2. secret/data/config를 {"version": "2.0", "updated": "2024-01-01"}로 업데이트
-   - 롤백: 원본 데이터로 복원 (기존 값: {"version": "1.0", "updated": "2023-12-01"})
-
 3. secret/data/old-data 삭제
-   - 롤백: 원본 데이터로 복원 (기존 값: {"legacy": "data"})
+
+시스템이 각 작업에 대해 자동으로 적절한 롤백 방법을 계산하고 실행합니다.
 ```
 
-#### 복잡한 트랜잭션
+#### 복잡한 트랜잭션 (자동 롤백)
 
 ```text
 AI: 사용자 마이그레이션 트랜잭션을 실행해주세요:
 
 1. 새로운 사용자 데이터 생성: secret/data/users/new에 {"migrated": true, "version": "v2"}
-   - 롤백: secret/data/users/new 삭제
-
 2. 기존 설정 업데이트: secret/data/config를 {"migration_status": "completed"}로 변경
-   - 롤백: {"migration_status": "pending"}로 복원
-
 3. 임시 데이터 정리: secret/data/temp/migration 삭제
-   - 롤백: {"temp_data": "backup", "created": "2024-01-01"}로 복원
+
+실패 시 시스템이 자동으로 모든 변경사항을 원상복구합니다.
 ```
 
 ## 문제 해결

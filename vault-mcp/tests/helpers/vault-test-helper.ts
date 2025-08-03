@@ -25,8 +25,10 @@ export function createTestVaultConfig(): VaultConfig {
 /**
  * 테스트용 VaultClient 인스턴스 생성
  */
-export function createTestVaultClient(): VaultClient {
-  const config = createTestVaultConfig();
+export function createTestVaultClient(
+  overrides?: Partial<VaultConfig>
+): VaultClient {
+  const config = { ...createTestVaultConfig(), ...overrides };
   return new VaultClient(config);
 }
 

@@ -3,6 +3,7 @@
  */
 
 import { beforeAll, beforeEach, describe, expect, test } from "@jest/globals";
+import { TransactionOperation } from "../../src/types.js";
 import { VaultClient } from "../../src/vault-client.js";
 import {
   createTestVaultClient,
@@ -185,6 +186,114 @@ describe("Dry Run MCP Tools Integration", () => {
 
       expect(result.wouldSucceed).toBe(true);
       expect(result.simulatedData).toEqual(complexData);
+    });
+
+    it("should handle path restrictions in real scenarios", async () => {
+      // 제한된 경로를 가진 클라이언트 생성
+      const restrictedClient = createTestVaultClient({
+        allowedPaths: ["secret/data/test/allowed/"],
+      });
+
+      // 허용된 경로에서 벌크 작업 테스트
+      const allowedOperations = [
+        {
+          path: "secret/data/test/allowed/service1",
+          data: { config: "value1" },
+        },
+        {
+          path: "secret/data/test/allowed/service2",
+          data: { config: "value2" },
+        },
+      ];
+
+      const allowedResult = await restrictedClient.bulkWriteSecrets(
+        allowedOperations,
+        true
+      );
+      expect(allowedResult.success).toBe(true);
+      allowedResult.results.forEach((res) => {
+        expect(res.success).toBe(true);
+        expect(res.dryRun).toBe(true);
+      });
+
+      // 혼합된 경로에서 벌크 작업 테스트
+      const mixedOperations = [
+        {
+          path: "secret/data/test/allowed/service1",
+          data: { config: "value1" },
+        },
+        {
+          path: "secret/data/test/forbidden/service2",
+          data: { config: "value2" },
+        },
+        {
+          path: "secret/data/test/allowed/service3",
+          data: { config: "value3" },
+        },
+      ];
+
+      const mixedResult = await restrictedClient.bulkWriteSecrets(
+        mixedOperations,
+        true
+      );
+      expect(mixedResult.success).toBe(false);
+      expect(mixedResult.results[0].success).toBe(true); // 허용된 경로
+      expect(mixedResult.results[1].success).toBe(false); // 금지된 경로
+      expect(mixedResult.results[2].success).toBe(true); // 허용된 경로
+
+      expect(mixedResult.results[1].error).toContain("not allowed");
+    });
+
+    it("should handle path restrictions in transaction simulations", async () => {
+      const restrictedClient = createTestVaultClient({
+        allowedPaths: ["secret/data/test/allowed/"],
+      });
+
+      // 먼저 허용된 경로에 데이터 생성 (제한 없는 클라이언트로)
+      await vaultClient.writeSecret("secret/data/test/allowed/existing", {
+        initial: "data",
+      });
+
+      const operations: TransactionOperation[] = [
+        { type: "read", path: "secret/data/test/allowed/existing" },
+        {
+          type: "create",
+          path: "secret/data/test/allowed/new1",
+          data: { test: "data1" },
+        },
+        {
+          type: "create",
+          path: "secret/data/test/forbidden/new2",
+          data: { test: "data2" },
+        },
+        {
+          type: "update",
+          path: "secret/data/test/allowed/existing",
+          data: { updated: true },
+        },
+      ];
+
+      const result = await restrictedClient.executeTransactionDryRun(
+        operations
+      );
+
+      expect(result.wouldSucceed).toBe(false);
+      expect(result.results).toHaveLength(4);
+
+      // 허용된 경로들은 성공
+      expect(result.results[0].wouldSucceed).toBe(true); // READ
+      expect(result.results[1].wouldSucceed).toBe(true); // CREATE allowed
+      expect(result.results[3].wouldSucceed).toBe(true); // UPDATE allowed
+
+      // 금지된 경로는 실패
+      expect(result.results[2].wouldSucceed).toBe(false); // CREATE forbidden
+      expect(result.results[2].validationErrors).toBeDefined();
+      expect(result.results[2].validationErrors![0]).toBe(
+        "Access to path 'secret/data/test/forbidden/new2' is not allowed"
+      );
+
+      // 정리
+      await vaultClient.deleteSecret("secret/data/test/allowed/existing");
     });
   });
 });

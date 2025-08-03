@@ -1034,7 +1034,17 @@ export class VaultClient {
   ): Promise<ExploreResult> {
     this.checkReadPermission();
 
-    if (!this.isPathAllowed(basePath)) {
+    // Vault KV v2 경로 변환 함수
+    const convertToDataPath = (metadataPath: string): string => {
+      if (metadataPath.startsWith("secret/metadata/")) {
+        return metadataPath.replace("secret/metadata/", "secret/data/");
+      }
+      return metadataPath;
+    };
+
+    // 메타데이터 경로를 데이터 경로로 변환하여 경로 제한 확인
+    const dataBasePath = convertToDataPath(basePath);
+    if (!this.isPathAllowed(dataBasePath)) {
       throw new Error(`Access to path '${basePath}' is not allowed`);
     }
 
@@ -1074,7 +1084,15 @@ export class VaultClient {
             : `${currentPath}/${key}`;
 
           if (key.endsWith("/")) {
-            // 폴더인 경우
+            // 폴더인 경우 - 경로 제한 확인
+            const dataPath = convertToDataPath(fullPath);
+            if (!this.isPathAllowed(dataPath)) {
+              console.error(
+                `[Explore] Skipping folder ${fullPath}: Access not allowed`
+              );
+              continue;
+            }
+
             totalFolders++;
             const subChildren = await exploreRecursive(fullPath, depth + 1);
             children.push({
@@ -1084,7 +1102,15 @@ export class VaultClient {
               children: subChildren,
             });
           } else {
-            // 시크릿인 경우
+            // 시크릿인 경우 - 경로 제한 확인
+            const dataPath = convertToDataPath(fullPath);
+            if (!this.isPathAllowed(dataPath)) {
+              console.error(
+                `[Explore] Skipping secret ${fullPath}: Access not allowed`
+              );
+              continue;
+            }
+
             totalSecrets++;
             children.push({
               name: key,
@@ -1131,15 +1157,33 @@ export class VaultClient {
   ): Promise<YamlExportResult> {
     this.checkReadPermission();
 
-    if (!this.isPathAllowed(basePath)) {
+    // Vault KV v2 경로 변환 함수
+    const convertToDataPath = (metadataPath: string): string => {
+      if (metadataPath.startsWith("secret/metadata/")) {
+        return metadataPath.replace("secret/metadata/", "secret/data/");
+      }
+      return metadataPath;
+    };
+
+    // 메타데이터 경로를 데이터 경로로 변환하여 경로 제한 확인
+    const dataBasePath = convertToDataPath(basePath);
+    if (!this.isPathAllowed(dataBasePath)) {
       throw new Error(`Access to path '${basePath}' is not allowed`);
     }
 
+    // VAULT_ALLOWED_WORKING_DIR 설정이 필수 (보안상 제한)
+    if (!this.config.allowedWorkingDirectory) {
+      throw new Error(
+        `VAULT_ALLOWED_WORKING_DIR environment variable is required for export operations. ` +
+          `This security setting prevents unauthorized file system access.`
+      );
+    }
+
     // 출력 경로가 허용된 워킹 디렉토리 내에 있는지 확인 (보안상 제한)
-    const allowedWorkingDir =
-      this.config.allowedWorkingDirectory || process.cwd();
     const resolvedOutputPath = path.resolve(outputPath);
-    const resolvedWorkingDir = path.resolve(allowedWorkingDir);
+    const resolvedWorkingDir = path.resolve(
+      this.config.allowedWorkingDirectory
+    );
 
     if (!resolvedOutputPath.startsWith(resolvedWorkingDir)) {
       throw new Error(
@@ -1154,14 +1198,6 @@ export class VaultClient {
     try {
       const secrets: Record<string, any> = {};
       let secretsCount = 0;
-
-      // Vault KV v2 경로 변환 함수
-      const convertToDataPath = (metadataPath: string): string => {
-        if (metadataPath.startsWith("secret/metadata/")) {
-          return metadataPath.replace("secret/metadata/", "secret/data/");
-        }
-        return metadataPath;
-      };
 
       const collectSecrets = async (
         currentPath: string,
@@ -1182,6 +1218,16 @@ export class VaultClient {
             if (key.endsWith("/") && recursive) {
               // 폴더인 경우 - 재귀적으로 탐색
               const folderName = key.slice(0, -1);
+
+              // 폴더 경로에 대해서도 경로 제한 확인 (데이터 경로로 변환하여)
+              const dataPath = convertToDataPath(fullPath);
+              if (!this.isPathAllowed(dataPath)) {
+                console.error(
+                  `[Export] Skipping folder ${dataPath}: Access not allowed`
+                );
+                continue;
+              }
+
               targetObject[folderName] = {};
               await collectSecrets(fullPath, targetObject[folderName]);
             } else if (!key.endsWith("/")) {
@@ -1189,6 +1235,15 @@ export class VaultClient {
               try {
                 // 메타데이터 경로를 데이터 경로로 변환
                 const dataPath = convertToDataPath(fullPath);
+
+                // 각 시크릿 경로에 대해서도 경로 제한 확인
+                if (!this.isPathAllowed(dataPath)) {
+                  console.error(
+                    `[Export] Skipping ${dataPath}: Access not allowed`
+                  );
+                  continue;
+                }
+
                 console.error(
                   `[Export] Reading secret from data path: ${dataPath}`
                 );
@@ -1268,11 +1323,19 @@ export class VaultClient {
       throw new Error(`Access to path '${basePath}' is not allowed`);
     }
 
+    // VAULT_ALLOWED_WORKING_DIR 설정이 필수 (보안상 제한)
+    if (!this.config.allowedWorkingDirectory) {
+      throw new Error(
+        `VAULT_ALLOWED_WORKING_DIR environment variable is required for import operations. ` +
+          `This security setting prevents unauthorized file system access.`
+      );
+    }
+
     // 입력 파일이 허용된 워킹 디렉토리 내에 있는지 확인 (보안상 제한)
-    const allowedWorkingDir =
-      this.config.allowedWorkingDirectory || process.cwd();
     const resolvedYamlPath = path.resolve(yamlFilePath);
-    const resolvedWorkingDir = path.resolve(allowedWorkingDir);
+    const resolvedWorkingDir = path.resolve(
+      this.config.allowedWorkingDirectory
+    );
 
     if (!resolvedYamlPath.startsWith(resolvedWorkingDir)) {
       throw new Error(
